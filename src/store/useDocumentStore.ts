@@ -4,7 +4,7 @@ import { DatabaseService } from '@/services/database/DatabaseService';
 import { StorageService } from '@/services/storage/StorageService';
 import { ImageService } from '@/services/image/ImageService';
 import { OcrService } from '@/services/ocr/OcrService';
-import { Asset, requestPermissionsAsync } from 'expo-media-library';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { useSettingsStore } from './useSettingsStore';
 
 export type SortOption = 'newest' | 'oldest' | 'nameAsc' | 'nameDesc';
@@ -201,13 +201,23 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Auto-save to gallery if enabled in settings (Step 6)
     try {
       const autoSave = useSettingsStore.getState().auto_save_to_gallery;
-      if (autoSave) {
-        const { status } = await requestPermissionsAsync();
-        if (status === 'granted') {
-          for (const page of pages) {
-            const savePath = page.processed_path || page.original_path;
-            if (savePath) {
-              await Asset.create(savePath);
+      if (autoSave && Constants.executionEnvironment !== ExecutionEnvironment.StoreClient) {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const MediaLibrary = require('expo-media-library');
+        if (MediaLibrary) {
+          const { status } = await (MediaLibrary.requestPermissionsAsync
+            ? MediaLibrary.requestPermissionsAsync()
+            : Promise.resolve({ status: 'undetermined' }));
+          if (status === 'granted') {
+            for (const page of pages) {
+              const savePath = page.processed_path || page.original_path;
+              if (savePath) {
+                if (MediaLibrary.Asset && typeof MediaLibrary.Asset.create === 'function') {
+                  await MediaLibrary.Asset.create(savePath);
+                } else if (typeof MediaLibrary.createAssetAsync === 'function') {
+                  await MediaLibrary.createAssetAsync(savePath);
+                }
+              }
             }
           }
         }
