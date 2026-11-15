@@ -1,5 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
-import DocumentScanner, { ResponseType } from 'react-native-document-scanner-plugin';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { IScannerService, ScanOptions } from './IScannerService';
 import { ScanResult } from '@/core/types';
 
@@ -10,23 +10,29 @@ export class ScannerService implements IScannerService {
    */
   async scanWithCamera(options?: ScanOptions): Promise<ScanResult | null> {
     try {
-      // 1. Try native edge-detection scanner
-      try {
-        const result = await DocumentScanner.scanDocument({
-          maxNumDocuments: options?.maxNumDocuments || 50,
-          responseType: ResponseType.ImageFilePath,
-        });
+      // 1. Try native edge-detection scanner if not in Expo Go
+      if (Constants.executionEnvironment !== ExecutionEnvironment.StoreClient) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const DocumentScanner = require('react-native-document-scanner-plugin').default;
+          if (DocumentScanner && typeof DocumentScanner.scanDocument === 'function') {
+            const result = await DocumentScanner.scanDocument({
+              maxNumDocuments: options?.maxNumDocuments || 50,
+              responseType: 'imageFilePath',
+            });
 
-        if (result?.status === 'success' && result.scannedImages && result.scannedImages.length > 0) {
-          return {
-            pages: result.scannedImages.map((uri: string) => ({ uri })),
-          };
+            if (result?.status === 'success' && result.scannedImages && result.scannedImages.length > 0) {
+              return {
+                pages: result.scannedImages.map((uri: string) => ({ uri })),
+              };
+            }
+            if (result?.status === 'cancel') {
+              return null;
+            }
+          }
+        } catch (nativeErr) {
+          console.warn('Native DocumentScanner unavailable or failed, falling back to camera picker:', nativeErr);
         }
-        if (result?.status === 'cancel') {
-          return null;
-        }
-      } catch (nativeErr) {
-        console.warn('Native DocumentScanner unavailable or failed, falling back to camera picker:', nativeErr);
       }
 
       // 2. Camera fallback via expo-image-picker (FR-07)
