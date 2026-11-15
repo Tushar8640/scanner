@@ -46,13 +46,11 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 const styles = StyleSheet.create({
   container: {
     height: 48,
-    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: lightColors.border,
     marginHorizontal: 16,
     marginVertical: 8,
   },
@@ -62,7 +60,6 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 15,
-    color: lightColors.text,
     height: '100%',
   },
   clearBtn: {

@@ -125,28 +125,28 @@ export default function DocumentDetailScreen() {
       const fileName = `${document.title.replace(/[^a-zA-Z0-9_\-\u0980-\u09FF]/g, '_')}.pdf`;
 
       Alert.alert(
-        'PDF Exported',
-        'Choose how you want to save or share your PDF:',
+        t('pdfExported'),
+        t('choosePdfAction'),
         [
           {
-            text: 'Save to Downloads',
+            text: t('saveToDownloads'),
             onPress: async () => {
               const saved = await PdfService.saveToDownloads(newPdfPath, fileName);
               if (saved) {
-                Alert.alert('Success', 'PDF saved to your Downloads folder!');
+                Alert.alert(t('success'), t('pdfSavedToDownloads'));
               } else {
                 await PdfService.shareFile(newPdfPath, 'application/pdf', fileName);
               }
             },
           },
           {
-            text: 'Share',
+            text: t('share'),
             onPress: async () => {
               await PdfService.shareFile(newPdfPath, 'application/pdf', fileName);
             },
           },
           {
-            text: 'Done',
+            text: t('cancel'),
             style: 'cancel',
           },
         ]
@@ -263,7 +263,7 @@ export default function DocumentDetailScreen() {
 
       {/* PDF Export & Setting Modal (FR-20, FR-21, FR-22) */}
       <Modal visible={pdfModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('exportPdf')}</Text>
@@ -284,7 +284,7 @@ export default function DocumentDetailScreen() {
                   ]}
                   onPress={() => setPageSize(sz)}
                 >
-                  <Text style={[styles.pillText, { color: pageSize === sz ? '#FFFFFF' : colors.text }]}>
+                  <Text style={[styles.pillText, { color: pageSize === sz ? colors.primaryContrast : colors.text }]}>
                     {sz}
                   </Text>
                 </TouchableOpacity>
@@ -303,7 +303,7 @@ export default function DocumentDetailScreen() {
                   ]}
                   onPress={() => setQuality(q)}
                 >
-                  <Text style={[styles.pillText, { color: quality === q ? '#FFFFFF' : colors.text }]}>
+                  <Text style={[styles.pillText, { color: quality === q ? colors.primaryContrast : colors.text }]}>
                     {q === 'low' ? t('qualityLow') : q === 'medium' ? t('qualityMedium') : t('qualityHigh')}
                   </Text>
                 </TouchableOpacity>
@@ -316,7 +316,7 @@ export default function DocumentDetailScreen() {
             </View>
 
             <ActionButton
-              title={isExporting ? 'Generating...' : t('exportPdf')}
+              title={isExporting ? t('generating') : t('exportPdf')}
               loading={isExporting}
               onPress={handleGeneratePdfWithOptions}
               style={{ marginTop: 16 }}
@@ -327,9 +327,9 @@ export default function DocumentDetailScreen() {
 
       {/* Move to Folder Modal */}
       <Modal visible={moveModalVisible} transparent animationType="fade">
-        <View style={styles.modalCenterOverlay}>
+        <View style={[styles.modalCenterOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.moveModalCard, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Move to Folder</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('moveToFolder')}</Text>
             <ScrollView style={{ maxHeight: 240, marginVertical: 12 }}>
               <TouchableOpacity
                 style={[
@@ -340,7 +340,7 @@ export default function DocumentDetailScreen() {
                 onPress={() => handleSelectFolder(null)}
               >
                 <Ionicons name="folder-outline" size={20} color={colors.primary} />
-                <Text style={[styles.folderOptionText, { color: colors.text }]}>No Folder (Root)</Text>
+                <Text style={[styles.folderOptionText, { color: colors.text }]}>{t('noFolderRoot')}</Text>
                 {document.folder_id === null && (
                   <Ionicons name="checkmark" size={20} color={colors.primary} />
                 )}
@@ -374,7 +374,7 @@ export default function DocumentDetailScreen() {
 
       {/* Rename Modal */}
       <Modal visible={renameModalVisible} transparent animationType="fade">
-        <View style={styles.modalCenterOverlay}>
+        <View style={[styles.modalCenterOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.moveModalCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('rename')}</Text>
             <TextInput

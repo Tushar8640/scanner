@@ -1,4 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
+import DocumentScanner, { ResponseType } from 'react-native-document-scanner-plugin';
 import { IScannerService, ScanOptions } from './IScannerService';
 import { ScanResult } from '@/core/types';
 
@@ -9,29 +10,26 @@ export class ScannerService implements IScannerService {
    */
   async scanWithCamera(options?: ScanOptions): Promise<ScanResult | null> {
     try {
-      // Check if native ML Kit document scanner plugin is available
-      let DocumentScanner: any = null;
+      // 1. Try native edge-detection scanner
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        DocumentScanner = require('react-native-document-scanner-plugin').default;
-      } catch {
-        // Native module not linked in current JS environment, using ImagePicker fallback
-      }
-
-      if (DocumentScanner && typeof DocumentScanner.scanDocument === 'function') {
         const result = await DocumentScanner.scanDocument({
           maxNumDocuments: options?.maxNumDocuments || 50,
+          responseType: ResponseType.ImageFilePath,
         });
 
-        if (result.status === 'success' && result.scannedImages && result.scannedImages.length > 0) {
+        if (result?.status === 'success' && result.scannedImages && result.scannedImages.length > 0) {
           return {
             pages: result.scannedImages.map((uri: string) => ({ uri })),
           };
         }
-        return null;
+        if (result?.status === 'cancel') {
+          return null;
+        }
+      } catch (nativeErr) {
+        console.warn('Native DocumentScanner unavailable or failed, falling back to camera picker:', nativeErr);
       }
 
-      // Camera fallback via expo-image-picker (FR-07)
+      // 2. Camera fallback via expo-image-picker (FR-07)
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
         throw new Error('Camera permission is required to scan documents');

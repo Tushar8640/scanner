@@ -6,10 +6,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
+  AlertButton,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Document } from '@/core/types';
 import { useThemeColors } from '@/core/theme/colors';
+import { useSettingsStore } from '@/store/useSettingsStore';
 
 interface DocumentCardProps {
   document: Document;
@@ -29,6 +31,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   onMoveToFolder,
 }) => {
   const colors = useThemeColors();
+  const { t } = useSettingsStore();
 
   const formatDate = (ms: number) => {
     const d = new Date(ms);
@@ -36,19 +39,19 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   };
 
   const handleOptions = () => {
-    const options = [
-      { text: 'Share', onPress: onShare },
-      { text: 'Rename', onPress: onRename },
+    const options: AlertButton[] = [
+      { text: t('share'), onPress: onShare },
+      { text: t('rename'), onPress: onRename },
     ];
 
     if (onMoveToFolder) {
-      options.push({ text: 'Move to folder', onPress: onMoveToFolder });
+      options.push({ text: t('moveToFolder'), onPress: onMoveToFolder });
     }
 
-    options.push({ text: 'Delete', onPress: onDelete, style: 'destructive' as const });
-    options.push({ text: 'Cancel', style: 'cancel' as const, onPress: () => {} });
+    options.push({ text: t('delete'), onPress: onDelete, style: 'destructive' as const });
+    options.push({ text: t('cancel'), style: 'cancel' as const, onPress: () => {} });
 
-    Alert.alert(document.title, 'Select Option', options, { cancelable: true });
+    Alert.alert(document.title, t('selectOption'), options, { cancelable: true });
   };
 
   return (

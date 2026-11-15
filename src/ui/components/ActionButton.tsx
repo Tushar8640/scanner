@@ -99,10 +99,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
-  outlineBorder: {
-    borderWidth: 1.5,
-    borderColor: lightColors.primary,
-  },
   text: {
     fontSize: 16,
     fontWeight: '600',

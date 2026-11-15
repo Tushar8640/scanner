@@ -432,7 +432,6 @@ export default function ScanReviewScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
   },
   center: {
     flex: 1,
@@ -445,26 +444,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: lightColors.border,
-    backgroundColor: '#FFFFFF',
     gap: 10,
   },
   titleInput: {
     flex: 1,
     fontSize: 16,
     fontWeight: '500',
-    color: lightColors.text,
   },
   pageBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
-    backgroundColor: lightColors.surfaceVariant,
   },
   pageBadgeText: {
     fontSize: 12,
     fontWeight: '700',
-    color: lightColors.textSecondary,
   },
   previewContainer: {
     flex: 1,
@@ -492,10 +486,8 @@ const styles = StyleSheet.create({
   },
   thumbnailStrip: {
     height: 76,
-    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: lightColors.border,
   },
   thumbScroll: {
     paddingHorizontal: 16,
@@ -511,9 +503,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  activeThumbWrapper: {
-    borderColor: lightColors.primary,
-  },
+  activeThumbWrapper: {},
   thumbImg: {
     width: '100%',
     height: '100%',
@@ -536,14 +526,11 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: lightColors.borderStrong,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: lightColors.surfaceVariant,
   },
   editingControls: {
-    backgroundColor: '#FFFFFF',
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
@@ -564,16 +551,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 14,
-    backgroundColor: lightColors.surfaceVariant,
     gap: 6,
   },
-  activeBatchToggle: {
-    backgroundColor: lightColors.primary,
-  },
+  activeBatchToggle: {},
   batchToggleText: {
     fontSize: 12,
     fontWeight: '600',
-    color: lightColors.textSecondary,
   },
   activeBatchToggleText: {
     color: '#FFFFFF',
@@ -582,15 +565,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: lightColors.surfaceVariant,
   },
-  activeFilterPill: {
-    backgroundColor: lightColors.primary,
-  },
+  activeFilterPill: {},
   filterPillText: {
     fontSize: 13,
     fontWeight: '600',
-    color: lightColors.text,
   },
   activeFilterPillText: {
     color: '#FFFFFF',
@@ -601,7 +580,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: lightColors.border,
   },
   toolBtn: {
     alignItems: 'center',
@@ -613,7 +591,6 @@ const styles = StyleSheet.create({
   toolBtnText: {
     fontSize: 12,
     fontWeight: '500',
-    color: lightColors.text,
   },
   saveContainer: {
     marginTop: 8,

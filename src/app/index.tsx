@@ -146,8 +146,8 @@ export default function HomeScreen() {
 
   const handleLongPressFolder = (folder: Folder) => {
     Alert.alert(
-      'Delete Folder',
-      `Delete "${folder.name}"? Documents inside this folder will not be deleted.`,
+      t('deleteFolder'),
+      `"${folder.name}"? ${t('deleteFolderConfirm')}`,
       [
         { text: t('cancel'), style: 'cancel' },
         {
@@ -299,8 +299,8 @@ export default function HomeScreen() {
             <ActivityIndicator color="#FFFFFF" size="small" />
           ) : (
             <>
-              <Ionicons name="camera" size={20} color="#FFFFFF" />
-              <Text style={styles.scanButtonText} numberOfLines={1}>
+              <Ionicons name="camera" size={20} color={colors.primaryContrast} />
+              <Text style={[styles.scanButtonText, { color: colors.primaryContrast }]} numberOfLines={1}>
                 {t('scan')}
               </Text>
             </>
@@ -310,7 +310,7 @@ export default function HomeScreen() {
 
       {/* Create Folder Modal */}
       <Modal visible={folderModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('createFolder')}</Text>
             <TextInput
@@ -343,7 +343,7 @@ export default function HomeScreen() {
 
       {/* Rename Document Modal */}
       <Modal visible={renameModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('rename')}</Text>
             <TextInput
@@ -374,9 +374,9 @@ export default function HomeScreen() {
 
       {/* Move to Folder Modal */}
       <Modal visible={moveModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface, maxHeight: 400 }]}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Move to Folder</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('moveToFolder')}</Text>
             <ScrollView style={{ marginBottom: 16 }}>
               <TouchableOpacity
                 style={[
@@ -387,7 +387,7 @@ export default function HomeScreen() {
                 onPress={() => handleSelectTargetFolder(null)}
               >
                 <Ionicons name="folder-outline" size={20} color={colors.primary} />
-                <Text style={[styles.folderOptionText, { color: colors.text }]}>No Folder (Root)</Text>
+                <Text style={[styles.folderOptionText, { color: colors.text }]}>{t('noFolderRoot')}</Text>
                 {targetDoc?.folder_id === null && (
                   <Ionicons name="checkmark" size={20} color={colors.primary} />
                 )}
@@ -425,7 +425,7 @@ export default function HomeScreen() {
       {/* Sort Options Modal */}
       <Modal visible={sortModalVisible} transparent animationType="fade">
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           activeOpacity={1}
           onPress={() => setSortModalVisible(false)}
         >

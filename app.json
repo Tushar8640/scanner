@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true
     },
@@ -27,7 +27,20 @@
       "expo-sqlite",
       "expo-sharing",
       "expo-secure-store",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "react-native-document-scanner-plugin",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to scan documents"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos",
+          "savePhotosPermission": "Allow $(PRODUCT_NAME) to save photos"
+        }
+      ]
     ]
   }
 }

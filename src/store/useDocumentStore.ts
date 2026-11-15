@@ -3,6 +3,9 @@ import { Document, Folder, Page, PageFilter, PageRotation } from '@/core/types';
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { StorageService } from '@/services/storage/StorageService';
 import { ImageService } from '@/services/image/ImageService';
+import { OcrService } from '@/services/ocr/OcrService';
+import { Asset, requestPermissionsAsync } from 'expo-media-library';
+import { useSettingsStore } from './useSettingsStore';
 
 export type SortOption = 'newest' | 'oldest' | 'nameAsc' | 'nameDesc';
 
@@ -194,6 +197,45 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     await DatabaseService.insertDocument(newDoc);
     await DatabaseService.insertPages(pages);
+
+    // Auto-save to gallery if enabled in settings (Step 6)
+    try {
+      const autoSave = useSettingsStore.getState().auto_save_to_gallery;
+      if (autoSave) {
+        const { status } = await requestPermissionsAsync();
+        if (status === 'granted') {
+          for (const page of pages) {
+            const savePath = page.processed_path || page.original_path;
+            if (savePath) {
+              await Asset.create(savePath);
+            }
+          }
+        }
+      }
+    } catch (galleryErr) {
+      console.warn('Auto-save to gallery warning:', galleryErr);
+    }
+
+    // Run OCR in background after saving so save isn't held up (Step 4)
+    (async () => {
+      try {
+        const ocrTexts: string[] = [];
+        for (const page of pages) {
+          const text = await OcrService.recognizeText(page.processed_path || page.original_path);
+          if (text) {
+            ocrTexts.push(text);
+            await DatabaseService.updatePage(page.id, { ocr_text: text });
+          }
+        }
+        if (ocrTexts.length > 0) {
+          const joinedText = ocrTexts.join('\n');
+          await DatabaseService.updateDocument(docId, { ocr_text: joinedText });
+          get().loadAll();
+        }
+      } catch (ocrErr) {
+        console.warn('Background OCR error:', ocrErr);
+      }
+    })();
 
     // Clear pending scan images now that document is created
     set({ pendingScanImages: [] });

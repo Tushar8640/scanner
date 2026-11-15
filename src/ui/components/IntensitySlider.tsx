@@ -97,13 +97,11 @@ export const IntensitySlider: React.FC<IntensitySliderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#F8F9FA',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#E9ECEF',
   },
   headerRow: {
     flexDirection: 'row',
@@ -119,10 +117,8 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: lightColors.text,
   },
   valueBadge: {
-    backgroundColor: lightColors.primary,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
@@ -130,7 +126,6 @@ const styles = StyleSheet.create({
   valueBadgeText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
   trackContainer: {
     width: '100%',
@@ -141,12 +136,10 @@ const styles = StyleSheet.create({
   trackBackground: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#DEE2E6',
     overflow: 'hidden',
   },
   trackActiveFill: {
     height: '100%',
-    backgroundColor: lightColors.primary,
     borderRadius: 4,
   },
   thumbHandle: {
@@ -154,9 +147,7 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: '#FFFFFF',
     borderWidth: 3,
-    borderColor: lightColors.primary,
     marginLeft: -13,
     top: 9,
     shadowColor: '#000',

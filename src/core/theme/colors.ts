@@ -1,3 +1,6 @@
+import { useColorScheme } from 'react-native';
+import { useSettingsStore } from '@/store/useSettingsStore';
+
 export const lightColors = {
   background: '#F8F9FA',
   surface: '#FFFFFF',
@@ -47,9 +50,6 @@ export const darkColors = {
 };
 
 export type ThemeColors = typeof lightColors;
-
-import { useColorScheme } from 'react-native';
-import { useSettingsStore } from '@/store/useSettingsStore';
 
 export function useThemeColors(): ThemeColors {
   const systemScheme = useColorScheme();

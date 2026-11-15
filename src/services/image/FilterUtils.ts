@@ -35,6 +35,63 @@ export function getCssFilter(filter: PageFilter, intensity: number = 0.6): strin
 }
 
 /**
+ * Builds the HTML markup for a single document page using GPU-accelerated filter layers
+ * (CSS filter plus the colour-dodge blend layer for shadow removal).
+ */
+export interface PageMarkupOptions {
+  base64: string;
+  filter: PageFilter;
+  intensity?: number;
+  rotation?: number;
+  isForPdf?: boolean;
+  frameId?: string;
+  baseId?: string;
+  clipId?: string;
+  dodgeId?: string;
+}
+
+export function generatePageMarkup(options: PageMarkupOptions): string {
+  const {
+    base64,
+    filter,
+    intensity = 0.6,
+    rotation = 0,
+    isForPdf = false,
+    frameId,
+    baseId,
+    clipId,
+    dodgeId,
+  } = options;
+
+  const imgSrc = `data:image/jpeg;base64,${base64}`;
+  const normIntensity = Math.max(0.1, Math.min(1.0, intensity));
+
+  const containerFilter = getCssFilter(filter, normIntensity);
+  const isMagicMode = filter === 'magic' || filter === 'bw';
+
+  const dodgeOpacity =
+    filter === 'bw'
+      ? Math.min(0.92, 0.45 + normIntensity * 0.45)
+      : Math.min(0.88, 0.35 + normIntensity * 0.52);
+  const blurPx = Math.round(10 + normIntensity * 10);
+  const dodgeFilter = `invert(100%) blur(${blurPx}px) grayscale(100%)`;
+
+  const frameIdAttr = frameId ? `id="${frameId}"` : '';
+  const baseIdAttr = baseId ? `id="${baseId}"` : '';
+  const clipIdAttr = clipId ? `id="${clipId}"` : '';
+  const dodgeIdAttr = dodgeId ? `id="${dodgeId}"` : '';
+
+  return `
+    <div class="doc-frame" ${frameIdAttr} style="transform: rotate(${rotation}deg); filter: ${containerFilter}; ${isForPdf ? 'box-shadow: none;' : ''}">
+      <img class="doc-base" ${baseIdAttr} src="${imgSrc}" alt="Document" />
+      <div class="dodge-clip" ${clipIdAttr} style="display: ${isMagicMode ? 'block' : 'none'};">
+        <img class="doc-dodge" ${dodgeIdAttr} src="${imgSrc}" style="filter: ${dodgeFilter}; opacity: ${dodgeOpacity};" alt="" />
+      </div>
+    </div>
+  `;
+}
+
+/**
  * Generates high-fidelity GPU-accelerated HTML markup for document page rendering.
  * Uses Background Division (Inverted Illumination Blur + Color-Dodge blend)
  * to remove uneven shadows, bleed-through from the back of the paper, and background noise.
@@ -61,20 +118,19 @@ export function generatePageHtml(options: {
     isForPdf = false,
   } = options;
 
-  const imgSrc = `data:image/jpeg;base64,${base64}`;
   const normIntensity = Math.max(0.1, Math.min(1.0, intensity));
 
-  const containerFilter = getCssFilter(filter, normIntensity);
-  const isMagicMode = filter === 'magic' || filter === 'bw';
-
-  // Dodge opacity scales smoothly with user-controlled intensity
-  const dodgeOpacity = Math.min(0.88, 0.35 + normIntensity * 0.52);
-  const blurPx = Math.round(10 + normIntensity * 10); // 11px to 20px
-
-  const dodgeFilter =
-    filter === 'bw'
-      ? `invert(100%) blur(${blurPx}px) grayscale(100%)`
-      : `invert(100%) blur(${blurPx}px) grayscale(100%)`;
+  const pageMarkup = generatePageMarkup({
+    base64,
+    filter,
+    intensity: normIntensity,
+    rotation,
+    isForPdf,
+    frameId: 'docFrame',
+    baseId: 'docBase',
+    clipId: 'dodgeClip',
+    dodgeId: 'docDodge',
+  });
 
   return `
     <!DOCTYPE html>
@@ -114,9 +170,7 @@ export function generatePageHtml(options: {
             line-height: 0;
             max-width: 98%;
             max-height: 98%;
-            transform: rotate(${rotation}deg);
             transform-origin: center center;
-            filter: ${containerFilter};
             box-shadow: ${isForPdf ? 'none' : '0 4px 14px rgba(0,0,0,0.35)'};
             border-radius: 2px;
             overflow: hidden;
@@ -131,7 +185,6 @@ export function generatePageHtml(options: {
             object-fit: contain;
           }
           .dodge-clip {
-            display: ${isMagicMode ? 'block' : 'none'};
             position: absolute;
             top: 0;
             left: 0;
@@ -148,9 +201,7 @@ export function generatePageHtml(options: {
             width: 112%;
             height: 112%;
             object-fit: fill;
-            filter: ${dodgeFilter};
             mix-blend-mode: color-dodge;
-            opacity: ${dodgeOpacity};
             pointer-events: none;
             transition: opacity 0.1s ease;
           }
@@ -158,12 +209,7 @@ export function generatePageHtml(options: {
       </head>
       <body>
         <div class="page-container">
-          <div class="doc-frame" id="docFrame">
-            <img class="doc-base" id="docBase" src="${imgSrc}" alt="Document" />
-            <div class="dodge-clip" id="dodgeClip">
-              <img class="doc-dodge" id="docDodge" src="${imgSrc}" alt="" />
-            </div>
-          </div>
+          ${pageMarkup}
         </div>
 
         <script>

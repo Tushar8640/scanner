@@ -48,13 +48,13 @@ export const FolderTabs: React.FC<FolderTabsProps> = ({
           <Ionicons
             name="documents-outline"
             size={16}
-            color={activeFolderId === null ? '#FFFFFF' : colors.textSecondary}
+            color={activeFolderId === null ? colors.primaryContrast : colors.textSecondary}
             style={styles.chipIcon}
           />
           <Text
             style={[
               styles.chipText,
-              { color: activeFolderId === null ? '#FFFFFF' : colors.textSecondary },
+              { color: activeFolderId === null ? colors.primaryContrast : colors.textSecondary },
             ]}
           >
             {allLabel}
@@ -78,13 +78,13 @@ export const FolderTabs: React.FC<FolderTabsProps> = ({
               <Ionicons
                 name="folder-outline"
                 size={16}
-                color={isActive ? '#FFFFFF' : colors.textSecondary}
+                color={isActive ? colors.primaryContrast : colors.textSecondary}
                 style={styles.chipIcon}
               />
               <Text
                 style={[
                   styles.chipText,
-                  { color: isActive ? '#FFFFFF' : colors.textSecondary },
+                  { color: isActive ? colors.primaryContrast : colors.textSecondary },
                 ]}
                 numberOfLines={1}
               >

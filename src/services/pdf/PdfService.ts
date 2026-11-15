@@ -2,8 +2,10 @@ import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Page, PdfPageSize, PdfQuality } from '@/core/types';
+import { Page, PageRotation, PdfPageSize, PdfQuality } from '@/core/types';
 import { StorageService } from '../storage/StorageService';
+import { ImageService } from '../image/ImageService';
+import { generatePageMarkup } from '../image/FilterUtils';
 
 export interface GeneratePdfOptions {
   title: string;
@@ -47,40 +49,44 @@ export class PdfService {
 
       let base64 = '';
       try {
-        const fileInfo = await FileSystem.getInfoAsync(imageUri);
-        if (fileInfo.exists) {
-          base64 = await FileSystem.readAsStringAsync(imageUri, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-        } else if (page.original_path) {
+        let sourcePath = imageUri;
+        const fileInfo = await FileSystem.getInfoAsync(sourcePath);
+        if (!fileInfo.exists && page.original_path) {
           const fallbackInfo = await FileSystem.getInfoAsync(page.original_path);
           if (fallbackInfo.exists) {
-            base64 = await FileSystem.readAsStringAsync(page.original_path, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
+            sourcePath = page.original_path;
           }
         }
+
+        // Apply physical rotation and requested quality compression before base64
+        const transformedUri = await ImageService.transformPage(
+          sourcePath,
+          (page.rotation || 0) as PageRotation,
+          'original',
+          options.quality || 'medium'
+        );
+
+        const transformedInfo = await FileSystem.getInfoAsync(transformedUri);
+        if (transformedInfo.exists) {
+          base64 = await FileSystem.readAsStringAsync(transformedUri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+        }
       } catch (err) {
-        console.warn(`Failed to read page image for PDF [${i}]:`, err);
+        console.warn(`Failed to process page image for PDF [${i}]:`, err);
       }
 
       if (!base64) continue;
 
-      const pageIntensity = page.intensity ?? 0.6;
-      let filterStyle = '';
-      if (page.filter === 'bw') {
-        filterStyle = `filter: grayscale(100%) contrast(250%) brightness(115%);`;
-      } else if (page.filter === 'grayscale') {
-        filterStyle = `filter: grayscale(100%) contrast(115%);`;
-      } else if (page.filter === 'magic' || page.filter === 'enhanced') {
-        const c = Math.round(116 + pageIntensity * 26);
-        const b = Math.round(102 + pageIntensity * 6);
-        filterStyle = `filter: contrast(${c}%) brightness(${b}%);`;
-      }
-
       pageDivs.push(`
         <div class="page-container">
-          <img class="doc-img" src="data:image/jpeg;base64,${base64}" style="transform: rotate(${page.rotation || 0}deg); ${filterStyle}" alt="Page ${i + 1}" />
+          ${generatePageMarkup({
+            base64,
+            filter: page.filter,
+            intensity: page.intensity ?? 0.6,
+            rotation: 0,
+            isForPdf: true,
+          })}
         </div>
       `);
     }
@@ -122,17 +128,47 @@ export class PdfService {
               justify-content: center;
               overflow: hidden;
               background-color: #FFFFFF;
+              padding: 0;
+              box-sizing: border-box;
             }
             .page-container:last-child {
               page-break-after: auto;
             }
-            .doc-img {
+            .doc-frame {
+              position: relative;
+              display: inline-block;
+              line-height: 0;
+              max-width: 100%;
+              max-height: 100%;
+              transform-origin: center center;
+              overflow: hidden;
+            }
+            .doc-base {
+              display: block;
               max-width: 100%;
               max-height: 100%;
               width: auto;
               height: auto;
               object-fit: contain;
-              display: block;
+            }
+            .dodge-clip {
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              overflow: hidden;
+              pointer-events: none;
+            }
+            .doc-dodge {
+              position: absolute;
+              top: -6%;
+              left: -6%;
+              width: 112%;
+              height: 112%;
+              object-fit: fill;
+              mix-blend-mode: color-dodge;
+              pointer-events: none;
             }
           </style>
         </head>

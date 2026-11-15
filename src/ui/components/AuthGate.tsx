@@ -30,7 +30,15 @@ export const AuthGate: React.FC = () => {
   };
 
   useEffect(() => {
+    async function checkLockout() {
+      const remaining = await SecurityService.getLockoutRemaining();
+      if (remaining > 0) {
+        setLockoutSeconds(remaining);
+        setErrorMsg(`Too many attempts! Locked for ${remaining}s`);
+      }
+    }
     if (app_lock_enabled && !isAuthenticated) {
+      checkLockout();
       attemptBiometrics();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -378,7 +378,7 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panT.panHandlers}
                     style={[styles.edgeTouchTarget, styles.edgeTouchT]}
                   >
-                    <View style={[styles.edgePill, styles.edgePillH]} />
+                    <View style={[styles.edgePill, styles.edgePillH, { borderColor: colors.primary }]} />
                   </View>
 
                   {/* Bottom Edge Handle */}
@@ -386,7 +386,7 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panB.panHandlers}
                     style={[styles.edgeTouchTarget, styles.edgeTouchB]}
                   >
-                    <View style={[styles.edgePill, styles.edgePillH]} />
+                    <View style={[styles.edgePill, styles.edgePillH, { borderColor: colors.primary }]} />
                   </View>
 
                   {/* Left Edge Handle */}
@@ -394,7 +394,7 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panL.panHandlers}
                     style={[styles.edgeTouchTarget, styles.edgeTouchL]}
                   >
-                    <View style={[styles.edgePill, styles.edgePillV]} />
+                    <View style={[styles.edgePill, styles.edgePillV, { borderColor: colors.primary }]} />
                   </View>
 
                   {/* Right Edge Handle */}
@@ -402,7 +402,7 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panR.panHandlers}
                     style={[styles.edgeTouchTarget, styles.edgeTouchR]}
                   >
-                    <View style={[styles.edgePill, styles.edgePillV]} />
+                    <View style={[styles.edgePill, styles.edgePillV, { borderColor: colors.primary }]} />
                   </View>
 
                   {/* Top-Left Corner Handle */}
@@ -410,8 +410,8 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panTl.panHandlers}
                     style={[styles.cornerTouchTarget, styles.cornerTl]}
                   >
-                    <View style={styles.handleDisc}>
-                      <View style={styles.handleDot} />
+                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
+                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
                     </View>
                   </View>
 
@@ -420,8 +420,8 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panTr.panHandlers}
                     style={[styles.cornerTouchTarget, styles.cornerTr]}
                   >
-                    <View style={styles.handleDisc}>
-                      <View style={styles.handleDot} />
+                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
+                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
                     </View>
                   </View>
 
@@ -430,8 +430,8 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panBl.panHandlers}
                     style={[styles.cornerTouchTarget, styles.cornerBl]}
                   >
-                    <View style={styles.handleDisc}>
-                      <View style={styles.handleDot} />
+                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
+                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
                     </View>
                   </View>
 
@@ -440,8 +440,8 @@ export const CropModal: React.FC<CropModalProps> = ({
                     {...panBr.panHandlers}
                     style={[styles.cornerTouchTarget, styles.cornerBr]}
                   >
-                    <View style={styles.handleDisc}>
-                      <View style={styles.handleDot} />
+                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
+                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
                     </View>
                   </View>
                 </View>
@@ -493,13 +493,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: lightColors.border,
   },
   headerBtn: {
     padding: 6,
   },
   applyBtn: {
-    backgroundColor: lightColors.primary,
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -515,11 +513,9 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 17,
     fontWeight: '700',
-    color: lightColors.text,
   },
   subTitle: {
     fontSize: 11,
-    color: lightColors.textSecondary,
     marginTop: 2,
   },
   viewport: {
@@ -595,7 +591,6 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: '#FFFFFF',
     borderWidth: 3,
-    borderColor: lightColors.primary,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -608,7 +603,6 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: lightColors.primary,
   },
 
   // Touch targets for edges (40dp width/height)
@@ -628,7 +622,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 2,
     borderWidth: 1,
-    borderColor: lightColors.primary,
   },
   edgePillH: {
     width: 32,
@@ -646,7 +639,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingHorizontal: 20,
     borderTopWidth: 1,
-    borderTopColor: lightColors.border,
   },
   toolAction: {
     alignItems: 'center',
@@ -656,13 +648,11 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: lightColors.surfaceVariant,
     alignItems: 'center',
     justifyContent: 'center',
   },
   toolActionText: {
     fontSize: 13,
     fontWeight: '600',
-    color: lightColors.text,
   },
 });
