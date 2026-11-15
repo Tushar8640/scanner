@@ -15,9 +15,10 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { SecurityService } from '@/services/security/SecurityService';
 import { PageFilter, PdfPageSize, PdfQuality } from '@/core/types';
 import { ActionButton } from '@/ui/components/ActionButton';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 export default function SettingsScreen() {
+  const colors = useThemeColors();
   const {
     language,
     theme,
@@ -25,12 +26,14 @@ export default function SettingsScreen() {
     default_page_size,
     default_quality,
     app_lock_enabled,
+    auto_save_to_gallery,
     setLanguage,
     setTheme,
     setDefaultFilter,
     setDefaultPageSize,
     setDefaultQuality,
     setAppLockEnabled,
+    setAutoSaveToGallery,
     t,
   } = useSettingsStore();
 
@@ -59,25 +62,28 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      contentContainerStyle={styles.content}
+    >
       {/* Language Section (FR-70) */}
       <View style={styles.section}>
-        <Text style={styles.sectionHeader}>{t('language')}</Text>
-        <View style={styles.card}>
+        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{t('language')}</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <TouchableOpacity
             style={styles.rowItem}
             onPress={() => setLanguage('bn')}
           >
             <View style={styles.rowLeft}>
               <Text style={styles.flag}>🇧🇩</Text>
-              <Text style={styles.rowLabel}>বাংলা (Bengali)</Text>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>বাংলা (Bengali)</Text>
             </View>
             {language === 'bn' && (
-              <Ionicons name="checkmark-circle" size={22} color={lightColors.primary} />
+              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
             )}
           </TouchableOpacity>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
           <TouchableOpacity
             style={styles.rowItem}
@@ -85,10 +91,10 @@ export default function SettingsScreen() {
           >
             <View style={styles.rowLeft}>
               <Text style={styles.flag}>🇺🇸</Text>
-              <Text style={styles.rowLabel}>English</Text>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>English</Text>
             </View>
             {language === 'en' && (
-              <Ionicons name="checkmark-circle" size={22} color={lightColors.primary} />
+              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
             )}
           </TouchableOpacity>
         </View>
@@ -96,33 +102,48 @@ export default function SettingsScreen() {
 
       {/* Theme Section (FR-72) */}
       <View style={styles.section}>
-        <Text style={styles.sectionHeader}>{t('theme')}</Text>
-        <View style={styles.card}>
+        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{t('theme')}</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <TouchableOpacity
             style={styles.rowItem}
             onPress={() => setTheme('light')}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="sunny-outline" size={22} color={lightColors.primary} />
-              <Text style={[styles.rowLabel, { marginLeft: 12 }]}>{t('themeLight')}</Text>
+              <Ionicons name="sunny-outline" size={22} color={colors.primary} />
+              <Text style={[styles.rowLabel, { color: colors.text, marginLeft: 12 }]}>{t('themeLight')}</Text>
             </View>
             {theme === 'light' && (
-              <Ionicons name="checkmark-circle" size={22} color={lightColors.primary} />
+              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
             )}
           </TouchableOpacity>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
           <TouchableOpacity
             style={styles.rowItem}
             onPress={() => setTheme('dark')}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="moon-outline" size={22} color={lightColors.primary} />
-              <Text style={[styles.rowLabel, { marginLeft: 12 }]}>{t('themeDark')}</Text>
+              <Ionicons name="moon-outline" size={22} color={colors.primary} />
+              <Text style={[styles.rowLabel, { color: colors.text, marginLeft: 12 }]}>{t('themeDark')}</Text>
             </View>
             {theme === 'dark' && (
-              <Ionicons name="checkmark-circle" size={22} color={lightColors.primary} />
+              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
+            )}
+          </TouchableOpacity>
+
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+          <TouchableOpacity
+            style={styles.rowItem}
+            onPress={() => setTheme('system')}
+          >
+            <View style={styles.rowLeft}>
+              <Ionicons name="phone-portrait-outline" size={22} color={colors.primary} />
+              <Text style={[styles.rowLabel, { color: colors.text, marginLeft: 12 }]}>{t('themeSystem')}</Text>
+            </View>
+            {theme === 'system' && (
+              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
             )}
           </TouchableOpacity>
         </View>
@@ -130,35 +151,35 @@ export default function SettingsScreen() {
 
       {/* Security & App Lock (FR-60, NFR-21) */}
       <View style={styles.section}>
-        <Text style={styles.sectionHeader}>{t('security')}</Text>
-        <View style={styles.card}>
+        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{t('security')}</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.rowItem}>
             <View style={styles.rowLeft}>
-              <Ionicons name="shield-checkmark-outline" size={22} color={lightColors.primary} />
+              <Ionicons name="shield-checkmark-outline" size={22} color={colors.primary} />
               <View style={{ marginLeft: 12 }}>
-                <Text style={styles.rowLabel}>{t('appLock')}</Text>
-                <Text style={styles.rowSubLabel}>Lock app with PIN or fingerprint</Text>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>{t('appLock')}</Text>
+                <Text style={[styles.rowSubLabel, { color: colors.textSecondary }]}>Lock app with PIN or fingerprint</Text>
               </View>
             </View>
             <Switch
               value={app_lock_enabled}
               onValueChange={handleToggleLock}
-              trackColor={{ false: lightColors.borderStrong, true: lightColors.primary }}
+              trackColor={{ false: colors.borderStrong, true: colors.primary }}
             />
           </View>
 
           {app_lock_enabled && (
             <>
-              <View style={styles.divider} />
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
               <TouchableOpacity
                 style={styles.rowItem}
                 onPress={() => setPinModalVisible(true)}
               >
                 <View style={styles.rowLeft}>
-                  <Ionicons name="key-outline" size={22} color={lightColors.text} />
-                  <Text style={[styles.rowLabel, { marginLeft: 12 }]}>{t('changePin')}</Text>
+                  <Ionicons name="key-outline" size={22} color={colors.text} />
+                  <Text style={[styles.rowLabel, { color: colors.text, marginLeft: 12 }]}>{t('changePin')}</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={lightColors.textSecondary} />
+                <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
               </TouchableOpacity>
             </>
           )}
@@ -167,19 +188,27 @@ export default function SettingsScreen() {
 
       {/* Default Presets (FR-71) */}
       <View style={styles.section}>
-        <Text style={styles.sectionHeader}>{t('defaultSettings')}</Text>
-        <View style={styles.card}>
+        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{t('defaultSettings')}</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {/* Default Filter */}
           <View style={styles.settingBlock}>
-            <Text style={styles.subHeader}>{t('filter')}</Text>
+            <Text style={[styles.subHeader, { color: colors.text }]}>{t('filter')}</Text>
             <View style={styles.pillRow}>
               {(['original', 'magic', 'enhanced', 'bw', 'grayscale'] as PageFilter[]).map((f) => (
                 <TouchableOpacity
                   key={f}
-                  style={[styles.pill, default_filter === f && styles.activePill]}
+                  style={[
+                    styles.pill,
+                    { backgroundColor: default_filter === f ? colors.primary : colors.surfaceVariant },
+                  ]}
                   onPress={() => setDefaultFilter(f)}
                 >
-                  <Text style={[styles.pillText, default_filter === f && styles.activePillText]}>
+                  <Text
+                    style={[
+                      styles.pillText,
+                      { color: default_filter === f ? '#FFFFFF' : colors.text },
+                    ]}
+                  >
                     {f === 'magic' ? 'Magic' : f === 'enhanced' ? 'Enhanced' : f === 'original' ? 'Original' : f === 'bw' ? 'B&W' : 'Grayscale'}
                   </Text>
                 </TouchableOpacity>
@@ -187,19 +216,27 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
           {/* Default Page Size */}
           <View style={styles.settingBlock}>
-            <Text style={styles.subHeader}>{t('pageSize')}</Text>
+            <Text style={[styles.subHeader, { color: colors.text }]}>{t('pageSize')}</Text>
             <View style={styles.pillRow}>
               {(['A4', 'Letter', 'Fit'] as PdfPageSize[]).map((sz) => (
                 <TouchableOpacity
                   key={sz}
-                  style={[styles.pill, default_page_size === sz && styles.activePill]}
+                  style={[
+                    styles.pill,
+                    { backgroundColor: default_page_size === sz ? colors.primary : colors.surfaceVariant },
+                  ]}
                   onPress={() => setDefaultPageSize(sz)}
                 >
-                  <Text style={[styles.pillText, default_page_size === sz && styles.activePillText]}>
+                  <Text
+                    style={[
+                      styles.pillText,
+                      { color: default_page_size === sz ? '#FFFFFF' : colors.text },
+                    ]}
+                  >
                     {sz}
                   </Text>
                 </TouchableOpacity>
@@ -207,46 +244,72 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
           {/* Default Quality */}
           <View style={styles.settingBlock}>
-            <Text style={styles.subHeader}>{t('quality')}</Text>
+            <Text style={[styles.subHeader, { color: colors.text }]}>{t('quality')}</Text>
             <View style={styles.pillRow}>
               {(['low', 'medium', 'high'] as PdfQuality[]).map((q) => (
                 <TouchableOpacity
                   key={q}
-                  style={[styles.pill, default_quality === q && styles.activePill]}
+                  style={[
+                    styles.pill,
+                    { backgroundColor: default_quality === q ? colors.primary : colors.surfaceVariant },
+                  ]}
                   onPress={() => setDefaultQuality(q)}
                 >
-                  <Text style={[styles.pillText, default_quality === q && styles.activePillText]}>
+                  <Text
+                    style={[
+                      styles.pillText,
+                      { color: default_quality === q ? '#FFFFFF' : colors.text },
+                    ]}
+                  >
                     {q === 'low' ? 'Low' : q === 'medium' ? 'Medium' : 'High'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
+
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+          {/* Auto-save to Gallery Option */}
+          <View style={styles.rowItem}>
+            <View style={styles.rowLeft}>
+              <Ionicons name="images-outline" size={22} color={colors.primary} />
+              <View style={{ marginLeft: 12 }}>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>Auto-save to Gallery</Text>
+                <Text style={[styles.rowSubLabel, { color: colors.textSecondary }]}>Save scanned images to photo gallery</Text>
+              </View>
+            </View>
+            <Switch
+              value={auto_save_to_gallery}
+              onValueChange={setAutoSaveToGallery}
+              trackColor={{ false: colors.borderStrong, true: colors.primary }}
+            />
+          </View>
         </View>
       </View>
 
       {/* About & Privacy (NFR-10, FR-82) */}
       <View style={styles.section}>
-        <Text style={styles.sectionHeader}>{t('about')}</Text>
-        <View style={styles.card}>
+        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{t('about')}</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.aboutHeader}>
-            <Ionicons name="scan-outline" size={32} color={lightColors.primary} />
-            <Text style={styles.aboutTitle}>{t('appName')}</Text>
-            <Text style={styles.aboutVersion}>{t('version')}</Text>
-            <View style={styles.freeBadge}>
-              <Text style={styles.freeBadgeText}>{t('freeAndNoWatermark')}</Text>
+            <Ionicons name="scan-outline" size={32} color={colors.primary} />
+            <Text style={[styles.aboutTitle, { color: colors.text }]}>{t('appName')}</Text>
+            <Text style={[styles.aboutVersion, { color: colors.textSecondary }]}>{t('version')}</Text>
+            <View style={[styles.freeBadge, { backgroundColor: colors.primaryLight }]}>
+              <Text style={[styles.freeBadgeText, { color: colors.primary }]}>{t('freeAndNoWatermark')}</Text>
             </View>
           </View>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
-          <View style={styles.privacyBox}>
-            <Ionicons name="lock-closed" size={18} color={lightColors.success} />
-            <Text style={styles.privacyText}>{t('privacyNote')}</Text>
+          <View style={[styles.privacyBox, { backgroundColor: colors.successLight }]}>
+            <Ionicons name="lock-closed" size={18} color={colors.success} />
+            <Text style={[styles.privacyText, { color: colors.success }]}>{t('privacyNote')}</Text>
           </View>
         </View>
       </View>
@@ -254,12 +317,15 @@ export default function SettingsScreen() {
       {/* Set/Change PIN Modal */}
       <Modal visible={pinModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{t('setPin')}</Text>
-            <Text style={styles.modalSub}>{t('enterPin')}</Text>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('setPin')}</Text>
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>{t('enterPin')}</Text>
 
             <TextInput
-              style={styles.pinInput}
+              style={[
+                styles.pinInput,
+                { color: colors.text, borderColor: colors.primary, backgroundColor: colors.surfaceVariant },
+              ]}
               value={newPin}
               onChangeText={setNewPin}
               keyboardType="number-pad"
@@ -295,7 +361,6 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: lightColors.background,
   },
   content: {
     padding: 16,
@@ -307,16 +372,13 @@ const styles = StyleSheet.create({
   sectionHeader: {
     fontSize: 14,
     fontWeight: '700',
-    color: lightColors.textSecondary,
     marginBottom: 8,
     marginLeft: 4,
     textTransform: 'uppercase',
   },
   card: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: lightColors.border,
     overflow: 'hidden',
   },
   rowItem: {
@@ -337,16 +399,13 @@ const styles = StyleSheet.create({
   rowLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: lightColors.text,
   },
   rowSubLabel: {
     fontSize: 13,
-    color: lightColors.textSecondary,
     marginTop: 2,
   },
   divider: {
     height: 1,
-    backgroundColor: lightColors.border,
     marginHorizontal: 16,
   },
   settingBlock: {
@@ -355,7 +414,6 @@ const styles = StyleSheet.create({
   subHeader: {
     fontSize: 14,
     fontWeight: '600',
-    color: lightColors.text,
     marginBottom: 8,
   },
   pillRow: {
@@ -366,20 +424,12 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: lightColors.surfaceVariant,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  activePill: {
-    backgroundColor: lightColors.primary,
   },
   pillText: {
     fontSize: 13,
     fontWeight: '600',
-    color: lightColors.text,
-  },
-  activePillText: {
-    color: '#FFFFFF',
   },
   aboutHeader: {
     alignItems: 'center',
@@ -388,23 +438,19 @@ const styles = StyleSheet.create({
   aboutTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: lightColors.text,
     marginTop: 8,
   },
   aboutVersion: {
     fontSize: 13,
-    color: lightColors.textSecondary,
     marginTop: 2,
   },
   freeBadge: {
     marginTop: 8,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: lightColors.primaryLight,
     borderRadius: 12,
   },
   freeBadgeText: {
-    color: lightColors.primary,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -413,12 +459,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     padding: 14,
-    backgroundColor: lightColors.successLight,
   },
   privacyText: {
     flex: 1,
     fontSize: 13,
-    color: lightColors.success,
     lineHeight: 18,
   },
   modalOverlay: {
@@ -431,7 +475,6 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 320,
-    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 20,
     alignItems: 'center',
@@ -439,11 +482,9 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: lightColors.text,
   },
   modalSub: {
     fontSize: 14,
-    color: lightColors.textSecondary,
     marginTop: 4,
     marginBottom: 16,
   },
@@ -452,7 +493,6 @@ const styles = StyleSheet.create({
     height: 50,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: lightColors.primary,
     fontSize: 24,
     fontWeight: '700',
     letterSpacing: 10,

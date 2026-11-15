@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, TextInput, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 interface SearchBarProps {
   value: string;
@@ -16,15 +16,17 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   placeholder,
   onClear,
 }) => {
+  const colors = useThemeColors();
+
   return (
-    <View style={styles.container}>
-      <Ionicons name="search" size={20} color={lightColors.textSecondary} style={styles.searchIcon} />
+    <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Ionicons name="search" size={20} color={colors.textSecondary} style={styles.searchIcon} />
       <TextInput
-        style={styles.input}
+        style={[styles.input, { color: colors.text }]}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor={lightColors.textMuted}
+        placeholderTextColor={colors.textMuted}
         returnKeyType="search"
         autoCapitalize="none"
       />
@@ -34,7 +36,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
           onPress={onClear || (() => onChangeText(''))}
           style={styles.clearBtn}
         >
-          <Ionicons name="close-circle" size={18} color={lightColors.textSecondary} />
+          <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
         </TouchableOpacity>
       )}
     </View>

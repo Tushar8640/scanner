@@ -9,7 +9,6 @@ export interface GeneratePdfOptions {
   title: string;
   pageSize?: PdfPageSize;
   quality?: PdfQuality;
-  password?: string;
 }
 
 export class PdfService {
@@ -36,6 +35,8 @@ export class PdfService {
       width = 612;
       height = 792;
       cssPageSize = 'letter';
+    } else if (pageSize === 'Fit') {
+      cssPageSize = 'auto';
     }
 
     // Build pages HTML with embedded base64 images for reliable offline rendering

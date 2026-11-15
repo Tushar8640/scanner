@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -39,6 +39,7 @@ export const CropModal: React.FC<CropModalProps> = ({
   onClose,
   onApplyCrop,
 }) => {
+  const colors = useThemeColors();
   const [naturalWidth, setNaturalWidth] = useState<number>(0);
   const [naturalHeight, setNaturalHeight] = useState<number>(0);
   const [displayedLayout, setDisplayedLayout] = useState<{
@@ -256,20 +257,20 @@ export const CropModal: React.FC<CropModalProps> = ({
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={styles.overlay}>
-        <View style={styles.modalCard}>
+        <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
           {/* Header */}
-          <View style={styles.header}>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
-              <Ionicons name="close" size={24} color={lightColors.text} />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
             <View style={styles.titleContainer}>
-              <Text style={styles.title}>Crop Document</Text>
-              <Text style={styles.subTitle}>Drag corners or edges to adjust</Text>
+              <Text style={[styles.title, { color: colors.text }]}>Crop Document</Text>
+              <Text style={[styles.subTitle, { color: colors.textSecondary }]}>Drag corners or edges to adjust</Text>
             </View>
             <TouchableOpacity
               onPress={handleApply}
               disabled={isProcessing}
-              style={[styles.headerBtn, styles.applyBtn]}
+              style={[styles.headerBtn, styles.applyBtn, { backgroundColor: colors.primary }]}
             >
               {isProcessing ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
@@ -449,19 +450,19 @@ export const CropModal: React.FC<CropModalProps> = ({
           </View>
 
           {/* Bottom Toolbar: Auto Crop & Reset */}
-          <View style={styles.toolbar}>
+          <View style={[styles.toolbar, { borderTopColor: colors.border }]}>
             <TouchableOpacity style={styles.toolAction} onPress={handleAutoCrop}>
-              <View style={styles.iconCircle}>
-                <Ionicons name="scan-outline" size={20} color={lightColors.primary} />
+              <View style={[styles.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
+                <Ionicons name="scan-outline" size={20} color={colors.primary} />
               </View>
-              <Text style={styles.toolActionText}>Auto Crop</Text>
+              <Text style={[styles.toolActionText, { color: colors.text }]}>Auto Crop</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.toolAction} onPress={handleReset}>
-              <View style={styles.iconCircle}>
-                <Ionicons name="refresh-outline" size={20} color={lightColors.text} />
+              <View style={[styles.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
+                <Ionicons name="refresh-outline" size={20} color={colors.text} />
               </View>
-              <Text style={styles.toolActionText}>Reset</Text>
+              <Text style={[styles.toolActionText, { color: colors.text }]}>Reset</Text>
             </TouchableOpacity>
           </View>
         </View>

@@ -20,11 +20,12 @@ import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { ActionButton } from '@/ui/components/ActionButton';
 import { DocumentPageView } from '@/ui/components/DocumentPageView';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 export default function DocumentDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { updateTitle, softDelete } = useDocumentStore();
+  const colors = useThemeColors();
+  const { updateTitle, softDelete, moveToFolder, folders } = useDocumentStore();
   const { default_page_size, default_quality, t } = useSettingsStore();
 
   const [document, setDocument] = useState<Document | null>(null);
@@ -36,11 +37,13 @@ export default function DocumentDetailScreen() {
   const [pdfModalVisible, setPdfModalVisible] = useState(false);
   const [pageSize, setPageSize] = useState<PdfPageSize>(default_page_size);
   const [quality, setQuality] = useState<PdfQuality>(default_quality);
-  const [password, setPassword] = useState('');
 
   // Rename modal
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [titleInput, setTitleInput] = useState('');
+
+  // Move to folder modal
+  const [moveModalVisible, setMoveModalVisible] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -137,25 +140,39 @@ export default function DocumentDetailScreen() {
             },
           },
           {
-            text: 'Share / Save to Files',
-            onPress: () => PdfService.shareFile(newPdfPath, 'application/pdf', fileName),
+            text: 'Share',
+            onPress: async () => {
+              await PdfService.shareFile(newPdfPath, 'application/pdf', fileName);
+            },
           },
-          { text: 'Done', style: 'cancel' },
+          {
+            text: 'Done',
+            style: 'cancel',
+          },
         ]
       );
     } catch (e: any) {
       setIsExporting(false);
-      console.error('Failed to generate PDF:', e);
-      Alert.alert('Export Error', e.message || 'Failed to generate PDF');
+      Alert.alert('Export Error', e.message || 'Failed to export PDF');
     }
   };
 
   const handleSaveRename = async () => {
-    if (document && titleInput.trim().length > 0) {
-      await updateTitle(document.id, titleInput.trim());
-      setDocument((prev) => (prev ? { ...prev, title: titleInput.trim() } : null));
-      setRenameModalVisible(false);
+    if (!document) return;
+    if (titleInput.trim().length === 0) {
+      Alert.alert('Warning', 'Title cannot be empty');
+      return;
     }
+    await updateTitle(document.id, titleInput.trim());
+    setDocument((prev) => (prev ? { ...prev, title: titleInput.trim() } : null));
+    setRenameModalVisible(false);
+  };
+
+  const handleSelectFolder = async (folderId: string | null) => {
+    if (!document) return;
+    await moveToFolder(document.id, folderId);
+    setDocument((prev) => (prev ? { ...prev, folder_id: folderId } : null));
+    setMoveModalVisible(false);
   };
 
   const handleDelete = () => {
@@ -175,42 +192,42 @@ export default function DocumentDetailScreen() {
 
   if (loading || !document) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={lightColors.primary} />
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Top Details Header */}
-      <View style={styles.infoBar}>
+      <View style={[styles.infoBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <View style={styles.titleArea}>
-          <Text style={styles.docTitle} numberOfLines={1}>
+          <Text style={[styles.docTitle, { color: colors.text }]} numberOfLines={1}>
             {document.title}
           </Text>
-          <Text style={styles.docSub}>
+          <Text style={[styles.docSub, { color: colors.textSecondary }]}>
             {pages.length} Pages • {new Date(document.created_at).toLocaleDateString()}
           </Text>
         </View>
         <TouchableOpacity
-          style={styles.renameBtn}
+          style={[styles.renameBtn, { backgroundColor: colors.primaryLight }]}
           onPress={() => setRenameModalVisible(true)}
         >
-          <Ionicons name="pencil" size={18} color={lightColors.primary} />
+          <Ionicons name="pencil" size={18} color={colors.primary} />
         </TouchableOpacity>
       </View>
 
       {/* Pages Preview ScrollView */}
       <ScrollView contentContainerStyle={styles.scrollPages} showsVerticalScrollIndicator={false}>
         {pages.map((p, index) => (
-          <View key={p.id} style={styles.pageCard}>
+          <View key={p.id} style={[styles.pageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <DocumentPageView
               uri={p.processed_path || p.original_path}
               filter={p.filter}
               intensity={p.intensity ?? 0.6}
               rotation={p.rotation}
-              backgroundColor="#FFFFFF"
+              backgroundColor={colors.surface}
             />
             <View style={styles.pageIndicator}>
               <Text style={styles.pageIndicatorText}>
@@ -222,44 +239,52 @@ export default function DocumentDetailScreen() {
       </ScrollView>
 
       {/* Bottom Action Bar */}
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
         <TouchableOpacity style={styles.toolAction} onPress={() => setPdfModalVisible(true)}>
-          <Ionicons name="document-text-outline" size={22} color={lightColors.primary} />
-          <Text style={styles.toolActionText}>{t('exportPdf')}</Text>
+          <Ionicons name="document-text-outline" size={22} color={colors.primary} />
+          <Text style={[styles.toolActionText, { color: colors.text }]}>{t('exportPdf')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.toolAction} onPress={handleShare}>
-          <Ionicons name="share-social-outline" size={22} color={lightColors.primary} />
-          <Text style={styles.toolActionText}>{t('share')}</Text>
+          <Ionicons name="share-social-outline" size={22} color={colors.primary} />
+          <Text style={[styles.toolActionText, { color: colors.text }]}>{t('share')}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.toolAction} onPress={() => setMoveModalVisible(true)}>
+          <Ionicons name="folder-outline" size={22} color={colors.primary} />
+          <Text style={[styles.toolActionText, { color: colors.text }]}>Move</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.toolAction} onPress={handleDelete}>
-          <Ionicons name="trash-outline" size={22} color={lightColors.danger} />
-          <Text style={[styles.toolActionText, { color: lightColors.danger }]}>{t('delete')}</Text>
+          <Ionicons name="trash-outline" size={22} color={colors.danger} />
+          <Text style={[styles.toolActionText, { color: colors.danger }]}>{t('delete')}</Text>
         </TouchableOpacity>
       </View>
 
-      {/* PDF Export & Setting Modal (FR-20, FR-21, FR-22, FR-24) */}
+      {/* PDF Export & Setting Modal (FR-20, FR-21, FR-22) */}
       <Modal visible={pdfModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{t('exportPdf')}</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('exportPdf')}</Text>
               <TouchableOpacity onPress={() => setPdfModalVisible(false)}>
-                <Ionicons name="close" size={24} color={lightColors.text} />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
 
             {/* Page Size Option */}
-            <Text style={styles.sectionLabel}>{t('pageSize')}</Text>
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('pageSize')}</Text>
             <View style={styles.pillRow}>
               {(['A4', 'Letter', 'Fit'] as PdfPageSize[]).map((sz) => (
                 <TouchableOpacity
                   key={sz}
-                  style={[styles.pill, pageSize === sz && styles.activePill]}
+                  style={[
+                    styles.pill,
+                    { backgroundColor: pageSize === sz ? colors.primary : colors.surfaceVariant },
+                  ]}
                   onPress={() => setPageSize(sz)}
                 >
-                  <Text style={[styles.pillText, pageSize === sz && styles.activePillText]}>
+                  <Text style={[styles.pillText, { color: pageSize === sz ? '#FFFFFF' : colors.text }]}>
                     {sz}
                   </Text>
                 </TouchableOpacity>
@@ -267,34 +292,27 @@ export default function DocumentDetailScreen() {
             </View>
 
             {/* Quality Option */}
-            <Text style={styles.sectionLabel}>{t('quality')}</Text>
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('quality')}</Text>
             <View style={styles.pillRow}>
               {(['low', 'medium', 'high'] as PdfQuality[]).map((q) => (
                 <TouchableOpacity
                   key={q}
-                  style={[styles.pill, quality === q && styles.activePill]}
+                  style={[
+                    styles.pill,
+                    { backgroundColor: quality === q ? colors.primary : colors.surfaceVariant },
+                  ]}
                   onPress={() => setQuality(q)}
                 >
-                  <Text style={[styles.pillText, quality === q && styles.activePillText]}>
+                  <Text style={[styles.pillText, { color: quality === q ? '#FFFFFF' : colors.text }]}>
                     {q === 'low' ? t('qualityLow') : q === 'medium' ? t('qualityMedium') : t('qualityHigh')}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            {/* Password Protection (FR-24) */}
-            <Text style={styles.sectionLabel}>{t('passwordProtect')} (Optional)</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={password}
-              onChangeText={setPassword}
-              placeholder={t('enterPassword')}
-              secureTextEntry
-            />
-
-            <View style={styles.watermarkBadge}>
-              <Ionicons name="shield-checkmark" size={16} color={lightColors.success} />
-              <Text style={styles.watermarkText}>{t('noWatermark')}</Text>
+            <View style={[styles.watermarkBadge, { backgroundColor: colors.successLight }]}>
+              <Ionicons name="shield-checkmark" size={16} color={colors.success} />
+              <Text style={[styles.watermarkText, { color: colors.success }]}>{t('noWatermark')}</Text>
             </View>
 
             <ActionButton
@@ -307,13 +325,63 @@ export default function DocumentDetailScreen() {
         </View>
       </Modal>
 
+      {/* Move to Folder Modal */}
+      <Modal visible={moveModalVisible} transparent animationType="fade">
+        <View style={styles.modalCenterOverlay}>
+          <View style={[styles.moveModalCard, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Move to Folder</Text>
+            <ScrollView style={{ maxHeight: 240, marginVertical: 12 }}>
+              <TouchableOpacity
+                style={[
+                  styles.folderOptionItem,
+                  document.folder_id === null && { backgroundColor: colors.primaryLight },
+                  { borderBottomColor: colors.border },
+                ]}
+                onPress={() => handleSelectFolder(null)}
+              >
+                <Ionicons name="folder-outline" size={20} color={colors.primary} />
+                <Text style={[styles.folderOptionText, { color: colors.text }]}>No Folder (Root)</Text>
+                {document.folder_id === null && (
+                  <Ionicons name="checkmark" size={20} color={colors.primary} />
+                )}
+              </TouchableOpacity>
+              {folders.map((f) => (
+                <TouchableOpacity
+                  key={f.id}
+                  style={[
+                    styles.folderOptionItem,
+                    document.folder_id === f.id && { backgroundColor: colors.primaryLight },
+                    { borderBottomColor: colors.border },
+                  ]}
+                  onPress={() => handleSelectFolder(f.id)}
+                >
+                  <Ionicons name="folder" size={20} color={colors.primary} />
+                  <Text style={[styles.folderOptionText, { color: colors.text }]}>{f.name}</Text>
+                  {document.folder_id === f.id && (
+                    <Ionicons name="checkmark" size={20} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <ActionButton
+              title={t('cancel')}
+              variant="outline"
+              onPress={() => setMoveModalVisible(false)}
+            />
+          </View>
+        </View>
+      </Modal>
+
       {/* Rename Modal */}
       <Modal visible={renameModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{t('rename')}</Text>
+        <View style={styles.modalCenterOverlay}>
+          <View style={[styles.moveModalCard, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('rename')}</Text>
             <TextInput
-              style={styles.modalInput}
+              style={[
+                styles.modalInput,
+                { color: colors.text, borderColor: colors.borderStrong, backgroundColor: colors.surfaceVariant },
+              ]}
               value={titleInput}
               onChangeText={setTitleInput}
               autoFocus
@@ -341,7 +409,6 @@ export default function DocumentDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: lightColors.background,
   },
   center: {
     flex: 1,
@@ -354,9 +421,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: lightColors.border,
   },
   titleArea: {
     flex: 1,
@@ -364,17 +429,14 @@ const styles = StyleSheet.create({
   docTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: lightColors.text,
   },
   docSub: {
     fontSize: 13,
-    color: lightColors.textSecondary,
     marginTop: 2,
   },
   renameBtn: {
     padding: 8,
     borderRadius: 8,
-    backgroundColor: lightColors.primaryLight,
   },
   scrollPages: {
     padding: 16,
@@ -382,11 +444,9 @@ const styles = StyleSheet.create({
     paddingBottom: 90,
   },
   pageCard: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: lightColors.border,
     position: 'relative',
     height: 480,
   },
@@ -414,9 +474,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 72,
-    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: lightColors.border,
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
@@ -432,19 +490,30 @@ const styles = StyleSheet.create({
   toolActionText: {
     fontSize: 12,
     fontWeight: '600',
-    color: lightColors.text,
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
+  modalCenterOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   modalCard: {
-    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 32,
+  },
+  moveModalCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 16,
+    padding: 20,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -455,12 +524,10 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: lightColors.text,
   },
   sectionLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: lightColors.textSecondary,
     marginTop: 12,
     marginBottom: 8,
   },
@@ -472,47 +539,49 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: lightColors.surfaceVariant,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  activePill: {
-    backgroundColor: lightColors.primary,
   },
   pillText: {
     fontSize: 13,
     fontWeight: '600',
-    color: lightColors.text,
-  },
-  activePillText: {
-    color: '#FFFFFF',
   },
   modalInput: {
     height: 48,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: lightColors.borderStrong,
     paddingHorizontal: 12,
     fontSize: 15,
-    color: lightColors.text,
+    marginTop: 8,
+    marginBottom: 16,
   },
   watermarkBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: lightColors.successLight,
     padding: 10,
     borderRadius: 8,
     marginTop: 14,
   },
   watermarkText: {
     fontSize: 13,
-    color: lightColors.success,
     fontWeight: '600',
   },
   modalActions: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 16,
+  },
+  folderOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderRadius: 8,
+  },
+  folderOptionText: {
+    fontSize: 15,
+    flex: 1,
   },
 });

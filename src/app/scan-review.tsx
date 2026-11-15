@@ -20,7 +20,7 @@ import { ActionButton } from '@/ui/components/ActionButton';
 import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { CropModal } from '@/ui/components/CropModal';
 import { IntensitySlider } from '@/ui/components/IntensitySlider';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 interface EditablePage {
   id: string;
@@ -33,6 +33,7 @@ interface EditablePage {
 
 export default function ScanReviewScreen() {
   const params = useLocalSearchParams<{ rawImages?: string }>();
+  const colors = useThemeColors();
   const { createDocument, activeFolderId, pendingScanImages } = useDocumentStore();
   const { default_filter, t } = useSettingsStore();
 
@@ -234,26 +235,26 @@ export default function ScanReviewScreen() {
 
   if (pages.length === 0) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={lightColors.primary} />
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Title Input Bar */}
-      <View style={styles.titleBar}>
-        <Ionicons name="create-outline" size={20} color={lightColors.textSecondary} />
+      <View style={[styles.titleBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <Ionicons name="create-outline" size={20} color={colors.textSecondary} />
         <TextInput
-          style={styles.titleInput}
+          style={[styles.titleInput, { color: colors.text }]}
           value={docTitle}
           onChangeText={setDocTitle}
           placeholder="Document title (optional)..."
-          placeholderTextColor={lightColors.textMuted}
+          placeholderTextColor={colors.textMuted}
         />
-        <View style={styles.pageBadge}>
-          <Text style={styles.pageBadgeText}>
+        <View style={[styles.pageBadge, { backgroundColor: colors.surfaceVariant }]}>
+          <Text style={[styles.pageBadgeText, { color: colors.textSecondary }]}>
             {currentPageIndex + 1} / {pages.length}
           </Text>
         </View>
@@ -272,14 +273,14 @@ export default function ScanReviewScreen() {
       </View>
 
       {/* Thumbnail Strip for Multi-Page Navigation */}
-      <View style={styles.thumbnailStrip}>
+      <View style={[styles.thumbnailStrip, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.thumbScroll}>
           {pages.map((p, idx) => (
             <TouchableOpacity
               key={p.id}
               style={[
                 styles.thumbWrapper,
-                idx === currentPageIndex && styles.activeThumbWrapper,
+                idx === currentPageIndex && { borderColor: colors.primary },
               ]}
               onPress={() => setCurrentPageIndex(idx)}
             >
@@ -289,14 +290,17 @@ export default function ScanReviewScreen() {
               </View>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity style={styles.addThumbBtn} onPress={handleAddPage}>
-            <Ionicons name="add" size={24} color={lightColors.primary} />
+          <TouchableOpacity
+            style={[styles.addThumbBtn, { backgroundColor: colors.surfaceVariant, borderColor: colors.borderStrong }]}
+            onPress={handleAddPage}
+          >
+            <Ionicons name="add" size={24} color={colors.primary} />
           </TouchableOpacity>
         </ScrollView>
       </View>
 
       {/* Editing Controls: Filters & Actions */}
-      <View style={styles.editingControls}>
+      <View style={[styles.editingControls, { backgroundColor: colors.surface }]}>
         {/* Filter Pills */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
           {filterOptions.map((f) => (
@@ -304,14 +308,14 @@ export default function ScanReviewScreen() {
               key={f.value}
               style={[
                 styles.filterPill,
-                currentPage?.filter === f.value && styles.activeFilterPill,
+                { backgroundColor: currentPage?.filter === f.value ? colors.primary : colors.surfaceVariant },
               ]}
               onPress={() => handleApplyFilter(f.value)}
             >
               <Text
                 style={[
                   styles.filterPillText,
-                  currentPage?.filter === f.value && styles.activeFilterPillText,
+                  { color: currentPage?.filter === f.value ? '#FFFFFF' : colors.text },
                 ]}
               >
                 {f.label}
@@ -339,18 +343,21 @@ export default function ScanReviewScreen() {
         {pages.length > 1 && (
           <View style={styles.batchRow}>
             <TouchableOpacity
-              style={[styles.batchToggle, applyToAll && styles.activeBatchToggle]}
+              style={[
+                styles.batchToggle,
+                { backgroundColor: applyToAll ? colors.primary : colors.surfaceVariant },
+              ]}
               onPress={() => setApplyToAll(!applyToAll)}
             >
               <Ionicons
                 name={applyToAll ? 'checkmark-circle' : 'layers-outline'}
                 size={16}
-                color={applyToAll ? '#FFFFFF' : lightColors.textSecondary}
+                color={applyToAll ? '#FFFFFF' : colors.textSecondary}
               />
               <Text
                 style={[
                   styles.batchToggleText,
-                  applyToAll && styles.activeBatchToggleText,
+                  { color: applyToAll ? '#FFFFFF' : colors.textSecondary },
                 ]}
               >
                 {applyToAll ? `Editing all ${pages.length} pages` : `Apply edit to all ${pages.length} pages`}
@@ -360,32 +367,32 @@ export default function ScanReviewScreen() {
         )}
 
         {/* Action Row: Crop, Rotate, Batch, Delete, Add */}
-        <View style={styles.actionRow}>
+        <View style={[styles.actionRow, { borderTopColor: colors.border }]}>
           <TouchableOpacity style={styles.toolBtn} onPress={() => setCropModalVisible(true)}>
-            <Ionicons name="crop-outline" size={22} color={lightColors.primary} />
-            <Text style={[styles.toolBtnText, { color: lightColors.primary }]}>{t('crop')}</Text>
+            <Ionicons name="crop-outline" size={22} color={colors.primary} />
+            <Text style={[styles.toolBtnText, { color: colors.primary }]}>{t('crop')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.toolBtn} onPress={handleRotate}>
-            <Ionicons name="refresh-outline" size={22} color={lightColors.text} />
-            <Text style={styles.toolBtnText}>{t('rotate')}</Text>
+            <Ionicons name="refresh-outline" size={22} color={colors.text} />
+            <Text style={[styles.toolBtnText, { color: colors.text }]}>{t('rotate')}</Text>
           </TouchableOpacity>
 
           {pages.length > 1 && (
             <TouchableOpacity style={styles.toolBtn} onPress={handleBatchApply}>
-              <Ionicons name="copy-outline" size={22} color={lightColors.text} />
-              <Text style={styles.toolBtnText}>{t('batchEdit')}</Text>
+              <Ionicons name="copy-outline" size={22} color={colors.text} />
+              <Text style={[styles.toolBtnText, { color: colors.text }]}>{t('batchEdit')}</Text>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity style={styles.toolBtn} onPress={handleDeletePage}>
-            <Ionicons name="trash-outline" size={22} color={lightColors.danger} />
-            <Text style={[styles.toolBtnText, { color: lightColors.danger }]}>{t('delete')}</Text>
+            <Ionicons name="trash-outline" size={22} color={colors.danger} />
+            <Text style={[styles.toolBtnText, { color: colors.danger }]}>{t('delete')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.toolBtn} onPress={handleAddPage}>
-            <Ionicons name="add-circle-outline" size={22} color={lightColors.primary} />
-            <Text style={[styles.toolBtnText, { color: lightColors.primary }]}>{t('addPage')}</Text>
+            <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
+            <Text style={[styles.toolBtnText, { color: colors.primary }]}>{t('addPage')}</Text>
           </TouchableOpacity>
         </View>
 

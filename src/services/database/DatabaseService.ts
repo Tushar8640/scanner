@@ -55,6 +55,11 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_docs_deleted ON documents(deleted_at);
       CREATE INDEX IF NOT EXISTS idx_docs_folder ON documents(folder_id);
       CREATE INDEX IF NOT EXISTS idx_pages_doc ON pages(document_id, position);
+
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
 
     // Migration for intensity column if table was previously created
@@ -63,6 +68,55 @@ export class DatabaseService {
     } catch {
       // column already exists
     }
+  }
+
+  // Whitelist of valid column names to prevent SQL injection
+  private static readonly ALLOWED_DOC_COLUMNS = new Set([
+    'folder_id',
+    'title',
+    'page_count',
+    'pdf_path',
+    'thumbnail_path',
+    'ocr_text',
+    'deleted_at',
+    'created_at',
+    'updated_at',
+  ]);
+
+  private static readonly ALLOWED_PAGE_COLUMNS = new Set([
+    'document_id',
+    'position',
+    'original_path',
+    'processed_path',
+    'filter',
+    'intensity',
+    'rotation',
+    'ocr_text',
+  ]);
+
+  // --- Settings Operations ---
+  static async getSetting(key: string): Promise<string | null> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_settings WHERE key = ?', [key]);
+    return row ? row.value : null;
+  }
+
+  static async setSetting(key: string, value: string): Promise<void> {
+    const db = await this.getDb();
+    await db.runAsync(
+      'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      [key, value]
+    );
+  }
+
+  static async getAllSettings(): Promise<Record<string, string>> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<{ key: string; value: string }>('SELECT key, value FROM app_settings');
+    const result: Record<string, string> = {};
+    for (const r of rows) {
+      result[r.key] = r.value;
+    }
+    return result;
   }
 
   // --- Folder Operations ---
@@ -161,7 +215,7 @@ export class DatabaseService {
 
   static async updateDocument(id: string, updates: Partial<Document>): Promise<void> {
     const db = await this.getDb();
-    const keys = Object.keys(updates).filter((k) => k !== 'id');
+    const keys = Object.keys(updates).filter((k) => k !== 'id' && this.ALLOWED_DOC_COLUMNS.has(k));
     if (keys.length === 0) return;
 
     const setClauses = keys.map((k) => `${k} = ?`).join(', ');
@@ -242,7 +296,7 @@ export class DatabaseService {
 
   static async updatePage(id: string, updates: Partial<Page>): Promise<void> {
     const db = await this.getDb();
-    const keys = Object.keys(updates).filter((k) => k !== 'id');
+    const keys = Object.keys(updates).filter((k) => k !== 'id' && this.ALLOWED_PAGE_COLUMNS.has(k));
     if (keys.length === 0) return;
 
     const setClauses = keys.map((k) => `${k} = ?`).join(', ');

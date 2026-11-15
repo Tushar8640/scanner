@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Document } from '@/core/types';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 interface DocumentCardProps {
   document: Document;
@@ -17,6 +17,7 @@ interface DocumentCardProps {
   onShare: () => void;
   onDelete: () => void;
   onRename: () => void;
+  onMoveToFolder?: () => void;
 }
 
 export const DocumentCard: React.FC<DocumentCardProps> = ({
@@ -25,33 +26,38 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   onShare,
   onDelete,
   onRename,
+  onMoveToFolder,
 }) => {
+  const colors = useThemeColors();
+
   const formatDate = (ms: number) => {
     const d = new Date(ms);
     return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   };
 
   const handleOptions = () => {
-    Alert.alert(
-      document.title,
-      'Select Option',
-      [
-        { text: 'Share', onPress: onShare },
-        { text: 'Rename', onPress: onRename },
-        { text: 'Delete', onPress: onDelete, style: 'destructive' },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-      { cancelable: true }
-    );
+    const options = [
+      { text: 'Share', onPress: onShare },
+      { text: 'Rename', onPress: onRename },
+    ];
+
+    if (onMoveToFolder) {
+      options.push({ text: 'Move to folder', onPress: onMoveToFolder });
+    }
+
+    options.push({ text: 'Delete', onPress: onDelete, style: 'destructive' as const });
+    options.push({ text: 'Cancel', style: 'cancel' as const, onPress: () => {} });
+
+    Alert.alert(document.title, 'Select Option', options, { cancelable: true });
   };
 
   return (
     <TouchableOpacity
       activeOpacity={0.7}
-      style={styles.card}
+      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
       onPress={onPress}
     >
-      <View style={styles.thumbnailContainer}>
+      <View style={[styles.thumbnailContainer, { backgroundColor: colors.surfaceVariant }]}>
         {document.thumbnail_path ? (
           <Image
             source={{ uri: document.thumbnail_path }}
@@ -60,7 +66,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
           />
         ) : (
           <View style={styles.placeholderThumb}>
-            <Ionicons name="document-text-outline" size={32} color={lightColors.textMuted} />
+            <Ionicons name="document-text-outline" size={32} color={colors.textMuted} />
           </View>
         )}
         <View style={styles.badge}>
@@ -69,10 +75,10 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
       </View>
 
       <View style={styles.infoContainer}>
-        <Text style={styles.title} numberOfLines={1}>
+        <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
           {document.title}
         </Text>
-        <Text style={styles.date}>{formatDate(document.created_at)}</Text>
+        <Text style={[styles.date, { color: colors.textSecondary }]}>{formatDate(document.created_at)}</Text>
       </View>
 
       <TouchableOpacity
@@ -80,7 +86,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         onPress={handleOptions}
       >
-        <Ionicons name="ellipsis-vertical" size={20} color={lightColors.textSecondary} />
+        <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
       </TouchableOpacity>
     </TouchableOpacity>
   );
@@ -88,7 +94,6 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 12,
     flexDirection: 'row',
@@ -96,7 +101,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginVertical: 6,
     borderWidth: 1,
-    borderColor: lightColors.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -108,7 +112,6 @@ const styles = StyleSheet.create({
     height: 75,
     borderRadius: 8,
     overflow: 'hidden',
-    backgroundColor: lightColors.surfaceVariant,
     position: 'relative',
   },
   thumbnail: {
@@ -143,12 +146,10 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: '600',
-    color: lightColors.text,
     marginBottom: 4,
   },
   date: {
     fontSize: 13,
-    color: lightColors.textSecondary,
   },
   moreBtn: {
     padding: 8,

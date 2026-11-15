@@ -5,11 +5,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { AuthGate } from '@/ui/components/AuthGate';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 export default function RootLayout() {
   const { initSettings, t } = useSettingsStore();
   const { loadAll } = useDocumentStore();
+  const colors = useThemeColors();
 
   useEffect(() => {
     initSettings();
@@ -17,23 +18,25 @@ export default function RootLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const isDark = colors.background === '#121212';
+
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <AuthGate />
       <Stack
         screenOptions={{
           headerStyle: {
-            backgroundColor: '#FFFFFF',
+            backgroundColor: colors.surface,
           },
-          headerTintColor: lightColors.text,
+          headerTintColor: colors.text,
           headerTitleStyle: {
             fontWeight: '600',
             fontSize: 18,
           },
           headerShadowVisible: false,
           contentStyle: {
-            backgroundColor: lightColors.background,
+            backgroundColor: colors.background,
           },
         }}
       >

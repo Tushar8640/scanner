@@ -7,7 +7,7 @@ import {
   ViewStyle,
   TextStyle,
 } from 'react-native';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 interface ActionButtonProps {
   title: string;
@@ -30,34 +30,36 @@ export const ActionButton: React.FC<ActionButtonProps> = ({
   style,
   textStyle,
 }) => {
+  const colors = useThemeColors();
+
   const getBackgroundColor = () => {
-    if (disabled) return '#E9ECEF';
+    if (disabled) return colors.border;
     switch (variant) {
       case 'primary':
-        return lightColors.primary;
+        return colors.primary;
       case 'secondary':
-        return lightColors.surfaceVariant;
+        return colors.surfaceVariant;
       case 'danger':
-        return lightColors.danger;
+        return colors.danger;
       case 'outline':
         return 'transparent';
       default:
-        return lightColors.primary;
+        return colors.primary;
     }
   };
 
   const getTextColor = () => {
-    if (disabled) return '#ADB5BD';
+    if (disabled) return colors.textMuted;
     switch (variant) {
       case 'primary':
       case 'danger':
-        return '#FFFFFF';
+        return colors.primaryContrast;
       case 'secondary':
-        return lightColors.text;
+        return colors.text;
       case 'outline':
-        return lightColors.primary;
+        return colors.primary;
       default:
-        return '#FFFFFF';
+        return colors.primaryContrast;
     }
   };
 
@@ -69,7 +71,7 @@ export const ActionButton: React.FC<ActionButtonProps> = ({
       style={[
         styles.button,
         { backgroundColor: getBackgroundColor() },
-        variant === 'outline' && styles.outlineBorder,
+        variant === 'outline' && { borderWidth: 1.5, borderColor: colors.primary },
         style,
       ]}
     >

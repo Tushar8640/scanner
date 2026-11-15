@@ -12,9 +12,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { Document } from '@/core/types';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 export default function TrashScreen() {
+  const colors = useThemeColors();
   const { trashDocuments, loadTrash, restore, permanentDelete } = useDocumentStore();
   const { t } = useSettingsStore();
 
@@ -53,7 +54,7 @@ export default function TrashScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <FlatList
         data={trashDocuments}
         keyExtractor={(item) => item.id}
@@ -62,47 +63,47 @@ export default function TrashScreen() {
           trashDocuments.length === 0 && styles.emptyListContent,
         ]}
         renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={styles.thumbContainer}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={[styles.thumbContainer, { backgroundColor: colors.surfaceVariant }]}>
               {item.thumbnail_path ? (
                 <Image source={{ uri: item.thumbnail_path }} style={styles.thumb} />
               ) : (
-                <Ionicons name="document-outline" size={24} color={lightColors.textMuted} />
+                <Ionicons name="document-outline" size={24} color={colors.textMuted} />
               )}
             </View>
 
             <View style={styles.info}>
-              <Text style={styles.title} numberOfLines={1}>
+              <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
                 {item.title}
               </Text>
-              <Text style={styles.date}>
+              <Text style={[styles.date, { color: colors.textSecondary }]}>
                 Deleted on: {item.deleted_at ? new Date(item.deleted_at).toLocaleDateString() : ''}
               </Text>
             </View>
 
             <View style={styles.actions}>
               <TouchableOpacity
-                style={styles.actionBtn}
+                style={[styles.actionBtn, { backgroundColor: colors.surfaceVariant }]}
                 onPress={() => handleRestore(item)}
               >
-                <Ionicons name="refresh-outline" size={20} color={lightColors.primary} />
+                <Ionicons name="refresh-outline" size={20} color={colors.primary} />
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.actionBtn}
+                style={[styles.actionBtn, { backgroundColor: colors.surfaceVariant }]}
                 onPress={() => handlePermanentDelete(item)}
               >
-                <Ionicons name="trash-bin-outline" size={20} color={lightColors.danger} />
+                <Ionicons name="trash-bin-outline" size={20} color={colors.danger} />
               </TouchableOpacity>
             </View>
           </View>
         )}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconBg}>
-              <Ionicons name="trash-outline" size={44} color={lightColors.textSecondary} />
+            <View style={[styles.emptyIconBg, { backgroundColor: colors.surfaceVariant }]}>
+              <Ionicons name="trash-outline" size={44} color={colors.textSecondary} />
             </View>
-            <Text style={styles.emptyTitle}>{t('noTrash')}</Text>
+            <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t('noTrash')}</Text>
           </View>
         }
       />
@@ -113,7 +114,6 @@ export default function TrashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: lightColors.background,
   },
   listContent: {
     padding: 16,
@@ -125,19 +125,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   card: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: lightColors.border,
   },
   thumbContainer: {
     width: 48,
     height: 60,
     borderRadius: 6,
-    backgroundColor: lightColors.surfaceVariant,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -153,11 +150,9 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 15,
     fontWeight: '600',
-    color: lightColors.text,
   },
   date: {
     fontSize: 12,
-    color: lightColors.textSecondary,
     marginTop: 4,
   },
   actions: {
@@ -168,7 +163,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: lightColors.surfaceVariant,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -179,7 +173,6 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: lightColors.surfaceVariant,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
@@ -187,6 +180,5 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: lightColors.textSecondary,
   },
 });

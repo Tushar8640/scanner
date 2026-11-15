@@ -8,13 +8,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Folder } from '@/core/types';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 interface FolderTabsProps {
   folders: Folder[];
   activeFolderId: string | null;
   onSelectFolder: (folderId: string | null) => void;
   onAddFolder: () => void;
+  onLongPressFolder?: (folder: Folder) => void;
   allLabel: string;
 }
 
@@ -23,8 +24,11 @@ export const FolderTabs: React.FC<FolderTabsProps> = ({
   activeFolderId,
   onSelectFolder,
   onAddFolder,
+  onLongPressFolder,
   allLabel,
 }) => {
+  const colors = useThemeColors();
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -35,20 +39,22 @@ export const FolderTabs: React.FC<FolderTabsProps> = ({
         <TouchableOpacity
           style={[
             styles.chip,
-            activeFolderId === null ? styles.activeChip : styles.inactiveChip,
+            activeFolderId === null
+              ? { backgroundColor: colors.primary, borderColor: colors.primary }
+              : { backgroundColor: colors.surface, borderColor: colors.border },
           ]}
           onPress={() => onSelectFolder(null)}
         >
           <Ionicons
             name="documents-outline"
             size={16}
-            color={activeFolderId === null ? '#FFFFFF' : lightColors.textSecondary}
+            color={activeFolderId === null ? '#FFFFFF' : colors.textSecondary}
             style={styles.chipIcon}
           />
           <Text
             style={[
               styles.chipText,
-              activeFolderId === null ? styles.activeChipText : styles.inactiveChipText,
+              { color: activeFolderId === null ? '#FFFFFF' : colors.textSecondary },
             ]}
           >
             {allLabel}
@@ -60,19 +66,25 @@ export const FolderTabs: React.FC<FolderTabsProps> = ({
           return (
             <TouchableOpacity
               key={folder.id}
-              style={[styles.chip, isActive ? styles.activeChip : styles.inactiveChip]}
+              style={[
+                styles.chip,
+                isActive
+                  ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                  : { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
               onPress={() => onSelectFolder(folder.id)}
+              onLongPress={() => onLongPressFolder && onLongPressFolder(folder)}
             >
               <Ionicons
                 name="folder-outline"
                 size={16}
-                color={isActive ? '#FFFFFF' : lightColors.textSecondary}
+                color={isActive ? '#FFFFFF' : colors.textSecondary}
                 style={styles.chipIcon}
               />
               <Text
                 style={[
                   styles.chipText,
-                  isActive ? styles.activeChipText : styles.inactiveChipText,
+                  { color: isActive ? '#FFFFFF' : colors.textSecondary },
                 ]}
                 numberOfLines={1}
               >
@@ -82,8 +94,11 @@ export const FolderTabs: React.FC<FolderTabsProps> = ({
           );
         })}
 
-        <TouchableOpacity style={styles.addChip} onPress={onAddFolder}>
-          <Ionicons name="add" size={18} color={lightColors.primary} />
+        <TouchableOpacity
+          style={[styles.addChip, { backgroundColor: colors.surface, borderColor: colors.primary }]}
+          onPress={onAddFolder}
+        >
+          <Ionicons name="add" size={18} color={colors.primary} />
         </TouchableOpacity>
       </ScrollView>
     </View>
@@ -102,37 +117,24 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
+    height: 36,
     paddingHorizontal: 14,
-    height: 38,
-    borderRadius: 20,
+    borderRadius: 18,
     borderWidth: 1,
-  },
-  activeChip: {
-    backgroundColor: lightColors.primary,
-    borderColor: lightColors.primary,
-  },
-  inactiveChip: {
-    backgroundColor: '#FFFFFF',
-    borderColor: lightColors.border,
   },
   chipIcon: {
     marginRight: 6,
   },
   chipText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  activeChipText: {
-    color: '#FFFFFF',
-  },
-  inactiveChipText: {
-    color: lightColors.text,
+    fontSize: 13,
+    fontWeight: '600',
   },
   addChip: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: lightColors.primaryLight,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
   },

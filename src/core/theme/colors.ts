@@ -47,3 +47,20 @@ export const darkColors = {
 };
 
 export type ThemeColors = typeof lightColors;
+
+import { useColorScheme } from 'react-native';
+import { useSettingsStore } from '@/store/useSettingsStore';
+
+export function useThemeColors(): ThemeColors {
+  const systemScheme = useColorScheme();
+  const theme = useSettingsStore((state) => state.theme);
+
+  if (theme === 'dark') {
+    return darkColors;
+  }
+  if (theme === 'light') {
+    return lightColors;
+  }
+  return systemScheme === 'dark' ? darkColors : lightColors;
+}
+

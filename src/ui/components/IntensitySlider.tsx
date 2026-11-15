@@ -7,7 +7,7 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { lightColors } from '@/core/theme/colors';
+import { useThemeColors } from '@/core/theme/colors';
 
 interface IntensitySliderProps {
   value: number; // 0.1 to 1.0
@@ -23,6 +23,7 @@ export const IntensitySlider: React.FC<IntensitySliderProps> = ({
   onChange,
   title = 'Magic Intensity',
 }) => {
+  const colors = useThemeColors();
   const [trackWidth, setTrackWidth] = useState<number>(0);
 
   useEffect(() => {
@@ -62,15 +63,15 @@ export const IntensitySlider: React.FC<IntensitySliderProps> = ({
   const thumbPercent = Math.max(0, Math.min(100, ((value - 0.1) / 0.9) * 100));
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
       {/* Header Info: Title & Live Percentage Badge */}
       <View style={styles.headerRow}>
         <View style={styles.labelGroup}>
-          <Ionicons name="sparkles" size={15} color={lightColors.primary} />
-          <Text style={styles.label}>{title}</Text>
+          <Ionicons name="sparkles" size={15} color={colors.primary} />
+          <Text style={[styles.label, { color: colors.text }]}>{title}</Text>
         </View>
-        <View style={styles.valueBadge}>
-          <Text style={styles.valueBadgeText}>{percentage}%</Text>
+        <View style={[styles.valueBadge, { backgroundColor: colors.primaryLight }]}>
+          <Text style={[styles.valueBadgeText, { color: colors.primary }]}>{percentage}%</Text>
         </View>
       </View>
 
@@ -80,13 +81,13 @@ export const IntensitySlider: React.FC<IntensitySliderProps> = ({
         onLayout={onTrackLayout}
         {...panResponder.panHandlers}
       >
-        <View style={styles.trackBackground}>
-          <View style={[styles.trackActiveFill, { width: `${thumbPercent}%` }]} />
+        <View style={[styles.trackBackground, { backgroundColor: colors.borderStrong }]}>
+          <View style={[styles.trackActiveFill, { width: `${thumbPercent}%`, backgroundColor: colors.primary }]} />
         </View>
         <View
           style={[
             styles.thumbHandle,
-            { left: `${thumbPercent}%` },
+            { left: `${thumbPercent}%`, backgroundColor: colors.primary, borderColor: colors.surface },
           ]}
         />
       </View>
