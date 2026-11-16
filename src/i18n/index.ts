@@ -1,7 +1,7 @@
 export const translations = {
   bn: {
     // Navigation & Headers
-    appName: 'ডকুমেন্ট স্ক্যানার',
+    appName: 'ডক স্ক্যানার',
     home: 'হোম',
     documents: 'ডকুমেন্টস',
     folders: 'ফোল্ডার',
@@ -221,7 +221,7 @@ export const translations = {
   },
   en: {
     // Navigation & Headers
-    appName: 'Document Scanner',
+    appName: 'Doc Scanner',
     home: 'Home',
     documents: 'Documents',
     folders: 'Folders',
