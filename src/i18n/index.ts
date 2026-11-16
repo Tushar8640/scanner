@@ -111,6 +111,30 @@ export const translations = {
     privacyNote: 'আপনার সকল তথ্য এই ফোনেই সুরক্ষিত। কোনো তথ্য সার্ভারে পাঠানো হয় না।',
     version: 'ভার্সন ১.০.০',
     freeAndNoWatermark: '১০০% ফ্রি ও ওয়াটারমার্ক মুক্ত',
+
+    // Edge detection & crop
+    cropTitle: 'কিনারা ঠিক করুন',
+    cropHint: 'কোণগুলো টেনে ডকুমেন্টের কিনারায় বসান',
+    detectingEdges: 'কিনারা শনাক্ত হচ্ছে…',
+    noEdgesFound: 'ডকুমেন্টের কিনারা পাওয়া যায়নি। কোণগুলো নিজে ঠিক করুন।',
+    wholePage: 'পুরো ছবি',
+    invalidCrop: 'কোণগুলো দিয়ে সঠিক চতুর্ভুজ তৈরি করুন',
+    cropFailed: 'এই পাতাটি ক্রপ করা যায়নি। আবার চেষ্টা করুন।',
+
+    // Redesigned screens
+    smartScan: 'স্মার্ট স্ক্যান',
+    importImages: 'ছবি আনুন',
+    importShort: 'ইমপোর্ট',
+    recentDocuments: 'সাম্প্রতিক ডকুমেন্ট',
+    folderNamePlaceholder: 'ফোল্ডারের নাম লিখুন…',
+    docTitlePlaceholder: 'ডকুমেন্টের নাম',
+    discardTitle: 'স্ক্যান বাতিল করবেন?',
+    discardMsg: 'স্ক্যান করা পাতাগুলো সেভ হবে না।',
+    discard: 'বাতিল করুন',
+    filterIntensity: 'ফিল্টারের তীব্রতা',
+    applyEditsToAll: 'সব পাতায় প্রয়োগ করুন',
+    pagesLabel: 'পাতা',
+    moveShort: 'সরান',
   },
   en: {
     // Navigation & Headers
@@ -224,6 +248,30 @@ export const translations = {
     privacyNote: 'All files are strictly stored on your device. No data is sent to external servers.',
     version: 'Version 1.0.0',
     freeAndNoWatermark: '100% Free & No Watermarks',
+
+    // Edge detection & crop
+    cropTitle: 'Adjust Edges',
+    cropHint: 'Drag the corners onto the document edges',
+    detectingEdges: 'Detecting edges…',
+    noEdgesFound: 'No document edges found. Adjust the corners manually.',
+    wholePage: 'Whole Image',
+    invalidCrop: 'Corners must form a four-sided shape',
+    cropFailed: 'Could not crop this page. Please try again.',
+
+    // Redesigned screens
+    smartScan: 'Smart Scan',
+    importImages: 'Import Images',
+    importShort: 'Import',
+    recentDocuments: 'Recent documents',
+    folderNamePlaceholder: 'Enter folder name…',
+    docTitlePlaceholder: 'Document name',
+    discardTitle: 'Discard this scan?',
+    discardMsg: 'The scanned pages will not be saved.',
+    discard: 'Discard',
+    filterIntensity: 'Filter intensity',
+    applyEditsToAll: 'Apply edits to all pages',
+    pagesLabel: 'pages',
+    moveShort: 'Move',
   }
 };
 

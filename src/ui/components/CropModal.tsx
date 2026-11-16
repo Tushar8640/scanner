@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -6,653 +6,483 @@ import {
   Image,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
   ActivityIndicator,
-  PanResponder,
+  GestureResponderEvent,
+  LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImageManipulator from 'expo-image-manipulator';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '@/core/theme/colors';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-interface CropRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
+import { useSettingsStore } from '@/store/useSettingsStore';
+import { useScanEngine } from '@/ui/components/ScanEngine';
+import { FULL_QUAD, Point, Quad, clamp01, cloneQuad, isConvexQuad, isFullQuad } from '@/services/scanner/quad';
 
 interface CropModalProps {
   visible: boolean;
-  imageUri: string;
+  /** The uncropped source image. Re-cropping always starts from this, so edges can be widened again. */
+  sourceUri: string;
+  /** Current crop corners; null means detect automatically when opened. */
+  initialCorners: Quad | null;
   onClose: () => void;
-  onApplyCrop: (croppedUri: string) => void;
+  onApply: (result: { uri: string; corners: Quad }) => void;
 }
 
-let gCropBox: CropRect = { x: 0, y: 0, width: 0, height: 0 };
-let gLayout = { width: 0, height: 0, offsetX: 0, offsetY: 0 };
+type ActiveHandle = { kind: 'corner' | 'edge'; index: number } | null;
 
-export const CropModal: React.FC<CropModalProps> = ({
-  visible,
-  imageUri,
-  onClose,
-  onApplyCrop,
-}) => {
-  const colors = useThemeColors();
-  const [naturalWidth, setNaturalWidth] = useState<number>(0);
-  const [naturalHeight, setNaturalHeight] = useState<number>(0);
-  const [displayedLayout, setDisplayedLayout] = useState<{
-    width: number;
-    height: number;
-    offsetX: number;
-    offsetY: number;
-  }>({ width: 0, height: 0, offsetX: 0, offsetY: 0 });
+const VIEW_PADDING = 28;
+const LOUPE_SIZE = 116;
+const LOUPE_ZOOM = 2.2;
+const INVALID_COLOR = '#E5484D';
 
-  const [cropBox, setCropBox] = useState<CropRect>({ x: 0, y: 0, width: 0, height: 0 });
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-
-  const containerWidth = SCREEN_WIDTH - 24;
-  const containerHeight = SCREEN_HEIGHT * 0.68;
-
-  // Sync module state for touch gesture tracking
-  useEffect(() => {
-    gCropBox = cropBox;
-  }, [cropBox]);
-
-  useEffect(() => {
-    gLayout = displayedLayout;
-  }, [displayedLayout]);
-
-  // Load natural image dimensions
-  useEffect(() => {
-    if (visible && imageUri) {
-      Image.getSize(
-        imageUri,
-        (w, h) => {
-          setNaturalWidth(w);
-          setNaturalHeight(h);
-
-          // Calculate displayed dimensions keeping aspect ratio
-          const imgAspect = w / h;
-          const containerAspect = containerWidth / containerHeight;
-
-          let dispW: number;
-          let dispH: number;
-
-          if (imgAspect > containerAspect) {
-            dispW = containerWidth;
-            dispH = containerWidth / imgAspect;
-          } else {
-            dispH = containerHeight;
-            dispW = containerHeight * imgAspect;
-          }
-
-          const offX = (containerWidth - dispW) / 2;
-          const offY = (containerHeight - dispH) / 2;
-
-          const layout = {
-            width: dispW,
-            height: dispH,
-            offsetX: offX,
-            offsetY: offY,
-          };
-
-          setDisplayedLayout(layout);
-
-          // Default full crop
-          setCropBox({
-            x: 0,
-            y: 0,
-            width: dispW,
-            height: dispH,
-          });
-        },
-        (err) => console.warn('Failed to get image size for crop:', err)
-      );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, imageUri]);
-
-  // Factory function to create PanResponder for corners and edges
-  const createHandlePan = (type: 'tl' | 'tr' | 'bl' | 'br' | 't' | 'b' | 'l' | 'r' | 'move') => {
-    let start: CropRect = { x: 0, y: 0, width: 0, height: 0 };
-
-    return PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponderCapture: () => true,
-      onPanResponderGrant: () => {
-        start = { ...gCropBox };
-      },
-      onPanResponderMove: (_, gestureState) => {
-        const maxW = gLayout.width;
-        const maxH = gLayout.height;
-        if (maxW <= 0 || maxH <= 0) return;
-
-        const { dx, dy } = gestureState;
-        let { x, y, width, height } = start;
-
-        if (type === 'tl') {
-          const newX = Math.max(0, Math.min(x + dx, x + width - 48));
-          const newY = Math.max(0, Math.min(y + dy, y + height - 48));
-          width = width - (newX - x);
-          height = height - (newY - y);
-          x = newX;
-          y = newY;
-        } else if (type === 'tr') {
-          const newY = Math.max(0, Math.min(y + dy, y + height - 48));
-          height = height - (newY - y);
-          y = newY;
-          width = Math.max(48, Math.min(maxW - x, width + dx));
-        } else if (type === 'bl') {
-          const newX = Math.max(0, Math.min(x + dx, x + width - 48));
-          width = width - (newX - x);
-          x = newX;
-          height = Math.max(48, Math.min(maxH - y, height + dy));
-        } else if (type === 'br') {
-          width = Math.max(48, Math.min(maxW - x, width + dx));
-          height = Math.max(48, Math.min(maxH - y, height + dy));
-        } else if (type === 't') {
-          const newY = Math.max(0, Math.min(y + dy, y + height - 48));
-          height = height - (newY - y);
-          y = newY;
-        } else if (type === 'b') {
-          height = Math.max(48, Math.min(maxH - y, height + dy));
-        } else if (type === 'l') {
-          const newX = Math.max(0, Math.min(x + dx, x + width - 48));
-          width = width - (newX - x);
-          x = newX;
-        } else if (type === 'r') {
-          width = Math.max(48, Math.min(maxW - x, width + dx));
-        } else if (type === 'move') {
-          x = Math.max(0, Math.min(x + dx, maxW - width));
-          y = Math.max(0, Math.min(y + dy, maxH - height));
-        }
-
-        setCropBox({ x, y, width, height });
-      },
-    });
-  };
-
-  // Memoize pan responders
-  const panTl = useMemo(() => createHandlePan('tl'), []);
-  const panTr = useMemo(() => createHandlePan('tr'), []);
-  const panBl = useMemo(() => createHandlePan('bl'), []);
-  const panBr = useMemo(() => createHandlePan('br'), []);
-  const panT = useMemo(() => createHandlePan('t'), []);
-  const panB = useMemo(() => createHandlePan('b'), []);
-  const panL = useMemo(() => createHandlePan('l'), []);
-  const panR = useMemo(() => createHandlePan('r'), []);
-  const panMove = useMemo(() => createHandlePan('move'), []);
-
-  // Auto Crop (FR-02 Edge Detection / Boundary trimming)
-  const handleAutoCrop = () => {
-    if (displayedLayout.width === 0 || displayedLayout.height === 0) return;
-
-    // Detect document edges: trims surrounding background margin (typically 6-8% margin)
-    const marginX = displayedLayout.width * 0.07;
-    const marginY = displayedLayout.height * 0.07;
-
-    setCropBox({
-      x: marginX,
-      y: marginY,
-      width: displayedLayout.width - marginX * 2,
-      height: displayedLayout.height - marginY * 2,
-    });
-  };
-
-  // Reset to full image
-  const handleReset = () => {
-    setCropBox({
-      x: 0,
-      y: 0,
-      width: displayedLayout.width,
-      height: displayedLayout.height,
-    });
-  };
-
-  // Apply Crop via native ImageManipulator
-  const handleApply = async () => {
-    if (naturalWidth === 0 || naturalHeight === 0 || displayedLayout.width === 0) return;
-
-    try {
-      setIsProcessing(true);
-
-      const scaleX = naturalWidth / displayedLayout.width;
-      const scaleY = naturalHeight / displayedLayout.height;
-
-      const originX = Math.max(0, Math.round(cropBox.x * scaleX));
-      const originY = Math.max(0, Math.round(cropBox.y * scaleY));
-      const cropW = Math.min(naturalWidth - originX, Math.round(cropBox.width * scaleX));
-      const cropH = Math.min(naturalHeight - originY, Math.round(cropBox.height * scaleY));
-
-      const result = await ImageManipulator.manipulateAsync(
-        imageUri,
-        [
-          {
-            crop: {
-              originX,
-              originY,
-              width: cropW,
-              height: cropH,
-            },
-          },
-        ],
-        { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
-      );
-
-      setIsProcessing(false);
-      onApplyCrop(result.uri);
-      onClose();
-    } catch (e) {
-      setIsProcessing(false);
-      console.warn('Crop failed:', e);
-    }
-  };
-
-  if (!visible) return null;
-
+export const CropModal: React.FC<CropModalProps> = ({ visible, onClose, ...rest }) => {
+  if (!visible || !rest.sourceUri) return null;
   return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View style={styles.overlay}>
-        <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
-          {/* Header */}
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
-              <Ionicons name="close" size={24} color={colors.text} />
-            </TouchableOpacity>
-            <View style={styles.titleContainer}>
-              <Text style={[styles.title, { color: colors.text }]}>Crop Document</Text>
-              <Text style={[styles.subTitle, { color: colors.textSecondary }]}>Drag corners or edges to adjust</Text>
-            </View>
-            <TouchableOpacity
-              onPress={handleApply}
-              disabled={isProcessing}
-              style={[styles.headerBtn, styles.applyBtn, { backgroundColor: colors.primary }]}
-            >
-              {isProcessing ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.applyBtnText}>Done</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {/* Image & Interactive Touch Crop Viewport */}
-          <View style={[styles.viewport, { width: containerWidth, height: containerHeight }]}>
-            {displayedLayout.width > 0 && (
-              <View
-                style={{
-                  width: displayedLayout.width,
-                  height: displayedLayout.height,
-                  position: 'relative',
-                }}
-              >
-                <Image
-                  source={{ uri: imageUri }}
-                  style={{ width: displayedLayout.width, height: displayedLayout.height }}
-                  resizeMode="contain"
-                />
-
-                {/* Dark Mask Top */}
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.mask,
-                    {
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: cropBox.y,
-                    },
-                  ]}
-                />
-                {/* Dark Mask Bottom */}
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.mask,
-                    {
-                      top: cropBox.y + cropBox.height,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                    },
-                  ]}
-                />
-                {/* Dark Mask Left */}
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.mask,
-                    {
-                      top: cropBox.y,
-                      left: 0,
-                      width: cropBox.x,
-                      height: cropBox.height,
-                    },
-                  ]}
-                />
-                {/* Dark Mask Right */}
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.mask,
-                    {
-                      top: cropBox.y,
-                      left: cropBox.x + cropBox.width,
-                      right: 0,
-                      height: cropBox.height,
-                    },
-                  ]}
-                />
-
-                {/* Interactive Crop Box Container */}
-                <View
-                  style={[
-                    styles.cropRectangle,
-                    {
-                      left: cropBox.x,
-                      top: cropBox.y,
-                      width: cropBox.width,
-                      height: cropBox.height,
-                    },
-                  ]}
-                >
-                  {/* Center drag area */}
-                  <View
-                    {...panMove.panHandlers}
-                    style={StyleSheet.absoluteFill}
-                  >
-                    {/* Grid Lines */}
-                    <View style={styles.gridH1} pointerEvents="none" />
-                    <View style={styles.gridH2} pointerEvents="none" />
-                    <View style={styles.gridV1} pointerEvents="none" />
-                    <View style={styles.gridV2} pointerEvents="none" />
-                  </View>
-
-                  {/* Top Edge Handle */}
-                  <View
-                    {...panT.panHandlers}
-                    style={[styles.edgeTouchTarget, styles.edgeTouchT]}
-                  >
-                    <View style={[styles.edgePill, styles.edgePillH, { borderColor: colors.primary }]} />
-                  </View>
-
-                  {/* Bottom Edge Handle */}
-                  <View
-                    {...panB.panHandlers}
-                    style={[styles.edgeTouchTarget, styles.edgeTouchB]}
-                  >
-                    <View style={[styles.edgePill, styles.edgePillH, { borderColor: colors.primary }]} />
-                  </View>
-
-                  {/* Left Edge Handle */}
-                  <View
-                    {...panL.panHandlers}
-                    style={[styles.edgeTouchTarget, styles.edgeTouchL]}
-                  >
-                    <View style={[styles.edgePill, styles.edgePillV, { borderColor: colors.primary }]} />
-                  </View>
-
-                  {/* Right Edge Handle */}
-                  <View
-                    {...panR.panHandlers}
-                    style={[styles.edgeTouchTarget, styles.edgeTouchR]}
-                  >
-                    <View style={[styles.edgePill, styles.edgePillV, { borderColor: colors.primary }]} />
-                  </View>
-
-                  {/* Top-Left Corner Handle */}
-                  <View
-                    {...panTl.panHandlers}
-                    style={[styles.cornerTouchTarget, styles.cornerTl]}
-                  >
-                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
-                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
-                    </View>
-                  </View>
-
-                  {/* Top-Right Corner Handle */}
-                  <View
-                    {...panTr.panHandlers}
-                    style={[styles.cornerTouchTarget, styles.cornerTr]}
-                  >
-                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
-                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
-                    </View>
-                  </View>
-
-                  {/* Bottom-Left Corner Handle */}
-                  <View
-                    {...panBl.panHandlers}
-                    style={[styles.cornerTouchTarget, styles.cornerBl]}
-                  >
-                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
-                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
-                    </View>
-                  </View>
-
-                  {/* Bottom-Right Corner Handle */}
-                  <View
-                    {...panBr.panHandlers}
-                    style={[styles.cornerTouchTarget, styles.cornerBr]}
-                  >
-                    <View style={[styles.handleDisc, { borderColor: colors.primary }]}>
-                      <View style={[styles.handleDot, { backgroundColor: colors.primary }]} />
-                    </View>
-                  </View>
-                </View>
-              </View>
-            )}
-          </View>
-
-          {/* Bottom Toolbar: Auto Crop & Reset */}
-          <View style={[styles.toolbar, { borderTopColor: colors.border }]}>
-            <TouchableOpacity style={styles.toolAction} onPress={handleAutoCrop}>
-              <View style={[styles.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
-                <Ionicons name="scan-outline" size={20} color={colors.primary} />
-              </View>
-              <Text style={[styles.toolActionText, { color: colors.text }]}>Auto Crop</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.toolAction} onPress={handleReset}>
-              <View style={[styles.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
-                <Ionicons name="refresh-outline" size={20} color={colors.text} />
-              </View>
-              <Text style={[styles.toolActionText, { color: colors.text }]}>Reset</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+    <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      {/* Mounted fresh on every open, so each page starts from its own corners */}
+      <CropEditor key={rest.sourceUri} onClose={onClose} {...rest} />
     </Modal>
   );
 };
 
+const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, initialCorners, onClose, onApply }) => {
+  const colors = useThemeColors();
+  const { t } = useSettingsStore();
+  const insets = useSafeAreaInsets();
+  const engine = useScanEngine();
+
+  const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
+  const [area, setArea] = useState<{ w: number; h: number } | null>(null);
+  const [corners, setCorners] = useState<Quad>(() => cloneQuad(initialCorners ?? FULL_QUAD));
+  const [active, setActive] = useState<ActiveHandle>(null);
+  const [detecting, setDetecting] = useState(initialCorners === null);
+  const [applying, setApplying] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const cornersRef = useRef<Quad>(corners);
+  const startRef = useRef<Quad>(corners);
+  const touchStartRef = useRef({ x: 0, y: 0 });
+
+  const updateCorners = (q: Quad) => {
+    cornersRef.current = q;
+    setCorners(q);
+  };
+
+  // Runs edge detection; callers set `detecting` first. State is only set in the promise callbacks.
+  const detectEdges = () => {
+    const finish = (found: Quad | null) => {
+      updateCorners(found ?? cloneQuad(FULL_QUAD));
+      setNotice(found ? null : t('noEdgesFound'));
+      setDetecting(false);
+    };
+    engine.detect(sourceUri).then(
+      (res) => finish(res.corners),
+      (e) => {
+        console.warn('Edge detection failed:', e);
+        finish(null);
+      }
+    );
+  };
+
+  const handleAutoDetect = () => {
+    setDetecting(true);
+    setNotice(null);
+    detectEdges();
+  };
+
+  useEffect(() => {
+    Image.getSize(
+      sourceUri,
+      (w, h) => setImageSize({ w, h }),
+      (err) => console.warn('Failed to read image size for crop:', err)
+    );
+    if (initialCorners === null) detectEdges();
+    // Runs once per mount; CropEditor is keyed by sourceUri.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fit the image inside the measured area
+  let dispW = 0;
+  let dispH = 0;
+  if (imageSize && area) {
+    const maxW = area.w - VIEW_PADDING * 2;
+    const maxH = area.h - VIEW_PADDING * 2;
+    const scale = Math.min(maxW / imageSize.w, maxH / imageSize.h);
+    dispW = imageSize.w * scale;
+    dispH = imageSize.h * scale;
+  }
+
+  // Touch handling via responder props; refs are only read inside the event callbacks
+  const handleProps = (kind: 'corner' | 'edge', index: number) => ({
+    onStartShouldSetResponder: () => true,
+    onMoveShouldSetResponder: () => true,
+    onResponderTerminationRequest: () => false,
+    onResponderGrant: (e: GestureResponderEvent) => {
+      startRef.current = cloneQuad(cornersRef.current);
+      touchStartRef.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+      setActive({ kind, index });
+      setNotice(null);
+    },
+    onResponderMove: (e: GestureResponderEvent) => {
+      if (dispW <= 0 || dispH <= 0) return;
+      const dx = e.nativeEvent.pageX - touchStartRef.current.x;
+      const dy = e.nativeEvent.pageY - touchStartRef.current.y;
+      const s = startRef.current;
+      const q = cloneQuad(s);
+      if (kind === 'corner') {
+        q[index] = { x: clamp01(s[index].x + dx / dispW), y: clamp01(s[index].y + dy / dispH) };
+      } else {
+        // Edge handle: move both corners of this side along the side's normal
+        const a = index;
+        const b = (index + 1) % 4;
+        const ex = (s[b].x - s[a].x) * dispW;
+        const ey = (s[b].y - s[a].y) * dispH;
+        const len = Math.hypot(ex, ey) || 1;
+        const nx = -ey / len;
+        const ny = ex / len;
+        const proj = dx * nx + dy * ny;
+        q[a] = { x: clamp01(s[a].x + (nx * proj) / dispW), y: clamp01(s[a].y + (ny * proj) / dispH) };
+        q[b] = { x: clamp01(s[b].x + (nx * proj) / dispW), y: clamp01(s[b].y + (ny * proj) / dispH) };
+      }
+      updateCorners(q);
+    },
+    onResponderRelease: () => setActive(null),
+    onResponderTerminate: () => setActive(null),
+  });
+
+  const valid = isConvexQuad(corners);
+  const lineColor = valid ? colors.primary : INVALID_COLOR;
+  const px = (p: Point) => ({ x: p.x * dispW, y: p.y * dispH });
+
+  const handleWholePage = () => {
+    setNotice(null);
+    updateCorners(cloneQuad(FULL_QUAD));
+  };
+
+  const handleApply = async () => {
+    if (!valid || applying) return;
+    try {
+      setApplying(true);
+      const q = cloneQuad(cornersRef.current);
+      const uri = isFullQuad(q) ? sourceUri : await engine.warp(sourceUri, q);
+      onApply({ uri, corners: q });
+      onClose();
+    } catch (e) {
+      console.warn('Crop failed:', e);
+      setNotice(t('cropFailed'));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const onAreaLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setArea({ w: width, h: height });
+  };
+
+  // Loupe: shows the area under the dragged corner, placed in the top corner away from the finger
+  let loupe: React.ReactNode = null;
+  if (active?.kind === 'corner' && dispW > 0) {
+    const p = px(corners[active.index]);
+    const onLeft = p.x < dispW / 2;
+    loupe = (
+      <View
+        pointerEvents="none"
+        style={[
+          styles.loupe,
+          { borderColor: lineColor, top: 8 },
+          onLeft ? { right: 12 } : { left: 12 },
+        ]}
+      >
+        <Image
+          source={{ uri: sourceUri }}
+          style={{
+            position: 'absolute',
+            width: dispW * LOUPE_ZOOM,
+            height: dispH * LOUPE_ZOOM,
+            left: LOUPE_SIZE / 2 - p.x * LOUPE_ZOOM,
+            top: LOUPE_SIZE / 2 - p.y * LOUPE_ZOOM,
+          }}
+        />
+        <View style={[styles.crossH, { backgroundColor: lineColor }]} />
+        <View style={[styles.crossV, { backgroundColor: lineColor }]} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose} style={styles.iconBtn} accessibilityLabel={t('cancel')}>
+            <Ionicons name="close" size={26} color="#FFFFFF" />
+          </TouchableOpacity>
+          <View style={styles.titleWrap}>
+            <Text style={styles.title}>{t('cropTitle')}</Text>
+            <Text style={[styles.subtitle, !valid && { color: INVALID_COLOR }]}>
+              {valid ? t('cropHint') : t('invalidCrop')}
+            </Text>
+          </View>
+          <View style={styles.iconBtn} />
+        </View>
+
+        {/* Image + quad editor */}
+        <View style={styles.area} onLayout={onAreaLayout}>
+          {dispW > 0 && (
+            <View style={{ width: dispW, height: dispH }}>
+              <Image source={{ uri: sourceUri }} style={{ width: dispW, height: dispH }} />
+
+              {/* Quad outline */}
+              {corners.map((c, i) => (
+                <Segment key={`s${i}`} a={px(c)} b={px(corners[(i + 1) % 4])} color={lineColor} />
+              ))}
+
+              {/* Edge handles at side midpoints */}
+              {corners.map((c, i) => {
+                const a = px(c);
+                const b = px(corners[(i + 1) % 4]);
+                const angle = Math.atan2(b.y - a.y, b.x - a.x);
+                return (
+                  <View
+                    key={`e${i}`}
+                    {...handleProps('edge', i)}
+                    style={[styles.handleTouch, { left: (a.x + b.x) / 2 - 22, top: (a.y + b.y) / 2 - 22 }]}
+                  >
+                    <View
+                      style={[
+                        styles.edgePill,
+                        { borderColor: lineColor, transform: [{ rotate: `${angle}rad` }] },
+                      ]}
+                    />
+                  </View>
+                );
+              })}
+
+              {/* Corner handles */}
+              {corners.map((c, i) => {
+                const p = px(c);
+                const isActive = active?.kind === 'corner' && active.index === i;
+                return (
+                  <View
+                    key={`c${i}`}
+                    {...handleProps('corner', i)}
+                    style={[styles.cornerTouch, { left: p.x - 26, top: p.y - 26 }]}
+                  >
+                    <View
+                      style={[
+                        styles.cornerDot,
+                        { borderColor: lineColor },
+                        isActive && { backgroundColor: 'rgba(255,255,255,0.35)' },
+                      ]}
+                    />
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          {loupe}
+
+          {(detecting || !imageSize) && (
+            <View style={styles.busy}>
+              <ActivityIndicator size="large" color="#FFFFFF" />
+              <Text style={styles.busyText}>{t('detectingEdges')}</Text>
+            </View>
+          )}
+        </View>
+
+        {notice && (
+          <View style={styles.notice}>
+            <Ionicons name="information-circle-outline" size={16} color="#FFFFFF" />
+            <Text style={styles.noticeText}>{notice}</Text>
+          </View>
+        )}
+
+        {/* Bottom bar */}
+        <View style={styles.toolbar}>
+          <TouchableOpacity style={styles.tool} onPress={handleAutoDetect} disabled={detecting || applying}>
+            <Ionicons name="scan-outline" size={24} color="#FFFFFF" />
+            <Text style={styles.toolText}>{t('autoCrop')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tool} onPress={handleWholePage} disabled={detecting || applying}>
+            <Ionicons name="expand-outline" size={24} color="#FFFFFF" />
+            <Text style={styles.toolText}>{t('wholePage')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.doneBtn, { backgroundColor: valid ? colors.primary : '#555555' }]}
+            onPress={handleApply}
+            disabled={!valid || detecting || applying}
+            accessibilityLabel={t('applyCrop')}
+          >
+            {applying ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Ionicons name="checkmark" size={28} color="#FFFFFF" />
+            )}
+          </TouchableOpacity>
+        </View>
+    </View>
+  );
+};
+
+/** A straight line between two points, drawn as a rotated view. */
+const Segment: React.FC<{ a: Point; b: Point; color: string }> = ({ a, b, color }) => {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: (a.x + b.x) / 2 - len / 2,
+        top: (a.y + b.y) / 2 - 1,
+        width: len,
+        height: 2,
+        backgroundColor: color,
+        transform: [{ rotate: `${angle}rad` }],
+      }}
+    />
+  );
+};
+
 const styles = StyleSheet.create({
-  overlay: {
+  root: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 12,
-  },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    overflow: 'hidden',
-    paddingBottom: 16,
+    backgroundColor: '#111111',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  headerBtn: {
-    padding: 6,
-  },
-  applyBtn: {
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  applyBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  titleContainer: {
+  iconBtn: {
+    width: 40,
+    height: 40,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  titleWrap: {
+    alignItems: 'center',
+    flex: 1,
   },
   title: {
+    color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '700',
   },
-  subTitle: {
-    fontSize: 11,
+  subtitle: {
+    color: '#BBBBBB',
+    fontSize: 12,
     marginTop: 2,
+    textAlign: 'center',
   },
-  viewport: {
-    alignSelf: 'center',
-    backgroundColor: '#1E1E1E',
+  area: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-    marginVertical: 10,
-    borderRadius: 12,
   },
-  mask: {
+  handleTouch: {
     position: 'absolute',
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-  },
-  cropRectangle: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    borderStyle: 'solid',
-  },
-  gridH1: {
-    position: 'absolute',
-    top: '33.3%',
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  gridH2: {
-    position: 'absolute',
-    top: '66.6%',
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  gridV1: {
-    position: 'absolute',
-    left: '33.3%',
-    top: 0,
-    bottom: 0,
-    width: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  gridV2: {
-    position: 'absolute',
-    left: '66.6%',
-    top: 0,
-    bottom: 0,
-    width: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  // Generous touch targets for corners (50x50)
-  cornerTouchTarget: {
-    position: 'absolute',
-    width: 50,
-    height: 50,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
   },
-  cornerTl: { top: -25, left: -25 },
-  cornerTr: { top: -25, right: -25 },
-  cornerBl: { bottom: -25, left: -25 },
-  cornerBr: { bottom: -25, right: -25 },
-
-  // Visible handle disc
-  handleDisc: {
+  edgePill: {
     width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  handleDot: {
-    width: 8,
     height: 8,
     borderRadius: 4,
+    borderWidth: 2,
+    backgroundColor: '#FFFFFF',
   },
-
-  // Touch targets for edges (40dp width/height)
-  edgeTouchTarget: {
+  cornerTouch: {
     position: 'absolute',
+    width: 52,
+    height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 5,
   },
-  edgeTouchT: { top: -20, left: 30, right: 30, height: 40 },
-  edgeTouchB: { bottom: -20, left: 30, right: 30, height: 40 },
-  edgeTouchL: { left: -20, top: 30, bottom: 30, width: 40 },
-  edgeTouchR: { right: -20, top: 30, bottom: 30, width: 40 },
-
-  // Edge pill indicators
-  edgePill: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 2,
-    borderWidth: 1,
+  cornerDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 3,
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  edgePillH: {
-    width: 32,
-    height: 6,
+  loupe: {
+    position: 'absolute',
+    width: LOUPE_SIZE,
+    height: LOUPE_SIZE,
+    borderRadius: LOUPE_SIZE / 2,
+    borderWidth: 3,
+    overflow: 'hidden',
+    backgroundColor: '#000000',
   },
-  edgePillV: {
-    width: 6,
-    height: 32,
+  crossH: {
+    position: 'absolute',
+    left: LOUPE_SIZE / 2 - 10,
+    top: LOUPE_SIZE / 2 - 1,
+    width: 20,
+    height: 2,
   },
-
+  crossV: {
+    position: 'absolute',
+    left: LOUPE_SIZE / 2 - 1,
+    top: LOUPE_SIZE / 2 - 10,
+    width: 2,
+    height: 20,
+  },
+  busy: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  busyText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    marginBottom: 8,
+    marginHorizontal: 16,
+  },
+  noticeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    flexShrink: 1,
+  },
   toolbar: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
     alignItems: 'center',
-    paddingTop: 12,
-    paddingHorizontal: 20,
-    borderTopWidth: 1,
+    justifyContent: 'space-around',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  toolAction: {
+  tool: {
     alignItems: 'center',
     gap: 4,
+    minWidth: 72,
   },
-  iconCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+  toolText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  doneBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  toolActionText: {
-    fontSize: 13,
-    fontWeight: '600',
   },
 });

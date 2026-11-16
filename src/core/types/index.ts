@@ -54,5 +54,7 @@ export interface ScanResult {
     uri: string;
     width?: number;
     height?: number;
+    /** True when edges were already detected and corrected (native document scanner). */
+    cropped?: boolean;
   }[];
 }

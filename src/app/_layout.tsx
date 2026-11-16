@@ -74,15 +74,14 @@ export default function RootLayout() {
         <Stack.Screen
           name="scan-review"
           options={{
-            title: t('review'),
-            headerBackTitle: t('cancel'),
+            headerShown: false,
+            gestureEnabled: false,
           }}
         />
         <Stack.Screen
           name="document/[id]"
           options={{
-            title: t('documentDetail'),
-            headerBackTitle: t('home'),
+            headerShown: false,
           }}
         />
         <Stack.Screen

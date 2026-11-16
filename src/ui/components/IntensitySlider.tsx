@@ -7,12 +7,14 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useThemeColors } from '@/core/theme/colors';
+import { ThemeColors, useThemeColors } from '@/core/theme/colors';
 
 interface IntensitySliderProps {
   value: number; // 0.1 to 1.0
   onChange: (value: number) => void;
   title?: string;
+  /** Overrides the app theme, e.g. the dark palette on the scan editor. */
+  palette?: ThemeColors;
 }
 
 let gTrackWidth = 0;
@@ -22,8 +24,10 @@ export const IntensitySlider: React.FC<IntensitySliderProps> = ({
   value,
   onChange,
   title = 'Magic Intensity',
+  palette,
 }) => {
-  const colors = useThemeColors();
+  const themeColors = useThemeColors();
+  const colors = palette ?? themeColors;
   const [trackWidth, setTrackWidth] = useState<number>(0);
 
   useEffect(() => {

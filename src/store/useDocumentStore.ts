@@ -17,9 +17,9 @@ interface DocumentState {
   searchQuery: string;
   sortBy: SortOption;
   isLoading: boolean;
-  pendingScanImages: { uri: string }[];
+  pendingScanImages: { uri: string; cropped?: boolean }[];
 
-  setPendingScanImages: (images: { uri: string }[]) => void;
+  setPendingScanImages: (images: { uri: string; cropped?: boolean }[]) => void;
   setSearchQuery: (query: string) => void;
   setSortBy: (sort: SortOption) => void;
   setActiveFolderId: (folderId: string | null) => void;

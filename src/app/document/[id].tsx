@@ -9,7 +9,9 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  FlatList,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -20,11 +22,13 @@ import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { ActionButton } from '@/ui/components/ActionButton';
 import { DocumentPageView } from '@/ui/components/DocumentPageView';
+import { ActionSheet, ActionSheetItem } from '@/ui/components/ActionSheet';
 import { useThemeColors } from '@/core/theme/colors';
 
 export default function DocumentDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const { updateTitle, softDelete, moveToFolder, folders } = useDocumentStore();
   const { default_page_size, default_quality, t } = useSettingsStore();
 
@@ -44,6 +48,8 @@ export default function DocumentDetailScreen() {
 
   // Move to folder modal
   const [moveModalVisible, setMoveModalVisible] = useState(false);
+  const [moreSheetVisible, setMoreSheetVisible] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -198,73 +204,154 @@ export default function DocumentDetailScreen() {
     );
   }
 
+  const moreItems: ActionSheetItem[] = [
+    { key: 'rename', label: t('rename'), icon: 'create-outline', onPress: () => setRenameModalVisible(true) },
+    { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveModalVisible(true) },
+    { key: 'pdf', label: t('exportPdf'), icon: 'document-text-outline', onPress: () => setPdfModalVisible(true) },
+    { key: 'delete', label: t('delete'), icon: 'trash-outline', destructive: true, onPress: handleDelete },
+  ];
+
+  const viewerPage = viewerIndex !== null ? pages[viewerIndex] : null;
+  const createdAt = new Date(document.created_at);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const dateLabel = `${pad(createdAt.getDate())}/${pad(createdAt.getMonth() + 1)}/${createdAt.getFullYear()}`;
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Top Details Header */}
-      <View style={[styles.infoBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <View style={styles.titleArea}>
-          <Text style={[styles.docTitle, { color: colors.text }]} numberOfLines={1}>
-            {document.title}
-          </Text>
-          <Text style={[styles.docSub, { color: colors.textSecondary }]}>
-            {pages.length} Pages • {new Date(document.created_at).toLocaleDateString()}
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={[styles.renameBtn, { backgroundColor: colors.primaryLight }]}
-          onPress={() => setRenameModalVisible(true)}
-        >
-          <Ionicons name="pencil" size={18} color={colors.primary} />
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      {/* Header */}
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <TouchableOpacity style={styles.headerBtn} onPress={() => router.back()} accessibilityLabel={t('home')}>
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-      </View>
-
-      {/* Pages Preview ScrollView */}
-      <ScrollView contentContainerStyle={styles.scrollPages} showsVerticalScrollIndicator={false}>
-        {pages.map((p, index) => (
-          <View key={p.id} style={[styles.pageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <DocumentPageView
-              uri={p.processed_path || p.original_path}
-              filter={p.filter}
-              intensity={p.intensity ?? 0.6}
-              rotation={p.rotation}
-              backgroundColor={colors.surface}
-            />
-            <View style={styles.pageIndicator}>
-              <Text style={styles.pageIndicatorText}>
-                {index + 1} / {pages.length}
-              </Text>
-            </View>
+        <TouchableOpacity style={styles.titleArea} onPress={() => setRenameModalVisible(true)}>
+          <View style={styles.titleRow}>
+            <Text style={[styles.docTitle, { color: colors.text }]} numberOfLines={1}>
+              {document.title}
+            </Text>
+            <Ionicons name="pencil" size={14} color={colors.textSecondary} />
           </View>
-        ))}
-      </ScrollView>
-
-      {/* Bottom Action Bar */}
-      <View style={[styles.bottomBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-        <TouchableOpacity style={styles.toolAction} onPress={() => setPdfModalVisible(true)}>
-          <Ionicons name="document-text-outline" size={22} color={colors.primary} />
-          <Text style={[styles.toolActionText, { color: colors.text }]}>{t('exportPdf')}</Text>
+          <Text style={[styles.docSub, { color: colors.textSecondary }]}>
+            {pages.length} {t('pagesLabel')} · {dateLabel}
+          </Text>
         </TouchableOpacity>
-
-        <TouchableOpacity style={styles.toolAction} onPress={handleShare}>
-          <Ionicons name="share-social-outline" size={22} color={colors.primary} />
-          <Text style={[styles.toolActionText, { color: colors.text }]}>{t('share')}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.toolAction} onPress={() => setMoveModalVisible(true)}>
-          <Ionicons name="folder-outline" size={22} color={colors.primary} />
-          <Text style={[styles.toolActionText, { color: colors.text }]}>Move</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.toolAction} onPress={handleDelete}>
-          <Ionicons name="trash-outline" size={22} color={colors.danger} />
-          <Text style={[styles.toolActionText, { color: colors.danger }]}>{t('delete')}</Text>
+        <TouchableOpacity style={styles.headerBtn} onPress={() => setMoreSheetVisible(true)} accessibilityLabel="More">
+          <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
 
-      {/* PDF Export & Setting Modal (FR-20, FR-21, FR-22) */}
-      <Modal visible={pdfModalVisible} transparent animationType="slide">
+      {/* Page grid */}
+      <FlatList
+        data={pages}
+        keyExtractor={(p) => p.id}
+        numColumns={2}
+        columnWrapperStyle={styles.gridRow}
+        contentContainerStyle={styles.gridContent}
+        renderItem={({ item, index }) => (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={[styles.pageCell, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={() => setViewerIndex(index)}
+          >
+            <View style={styles.pageCellInner} pointerEvents="none">
+              <DocumentPageView
+                uri={item.processed_path || item.original_path}
+                filter={item.filter}
+                intensity={item.intensity ?? 0.6}
+                rotation={item.rotation}
+                backgroundColor={colors.surface}
+              />
+            </View>
+            <View style={[styles.pageNum, { backgroundColor: colors.primary }]}>
+              <Text style={styles.pageNumText}>{index + 1}</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+
+      {/* Bottom toolbar */}
+      <View
+        style={[
+          styles.bottomBar,
+          { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 8) },
+        ]}
+      >
+        <BarButton icon="share-social-outline" label={t('share')} color={colors.text} onPress={handleShare} />
+        <BarButton icon="document-text-outline" label="PDF" color={colors.text} onPress={() => setPdfModalVisible(true)} />
+        <BarButton icon="create-outline" label={t('rename')} color={colors.text} onPress={() => setRenameModalVisible(true)} />
+        <BarButton icon="folder-outline" label={t('moveShort')} color={colors.text} onPress={() => setMoveModalVisible(true)} />
+        <BarButton icon="trash-outline" label={t('delete')} color={colors.danger} onPress={handleDelete} />
+      </View>
+
+      {isExporting && (
+        <View style={styles.exportOverlay}>
+          <ActivityIndicator size="large" color="#FFFFFF" />
+          <Text style={styles.exportText}>{t('generating')}</Text>
+        </View>
+      )}
+
+      <ActionSheet
+        visible={moreSheetVisible}
+        title={document.title}
+        items={moreItems}
+        onClose={() => setMoreSheetVisible(false)}
+      />
+
+      {/* Full-screen page viewer */}
+      <Modal
+        visible={viewerPage !== null}
+        animationType="fade"
+        onRequestClose={() => setViewerIndex(null)}
+        statusBarTranslucent
+      >
+        <View style={[styles.viewer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+          <View style={styles.viewerHeader}>
+            <TouchableOpacity style={styles.headerBtn} onPress={() => setViewerIndex(null)}>
+              <Ionicons name="close" size={26} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.viewerTitle}>
+              {(viewerIndex ?? 0) + 1} / {pages.length}
+            </Text>
+            <View style={styles.headerBtn} />
+          </View>
+          <View style={styles.viewerBody}>
+            {viewerPage && (
+              <DocumentPageView
+                key={viewerPage.id}
+                uri={viewerPage.processed_path || viewerPage.original_path}
+                filter={viewerPage.filter}
+                intensity={viewerPage.intensity ?? 0.6}
+                rotation={viewerPage.rotation}
+                backgroundColor="#000000"
+              />
+            )}
+          </View>
+          <View style={styles.viewerNav}>
+            <TouchableOpacity
+              style={styles.viewerNavBtn}
+              disabled={(viewerIndex ?? 0) <= 0}
+              onPress={() => setViewerIndex((i) => Math.max(0, (i ?? 0) - 1))}
+            >
+              <Ionicons name="chevron-back" size={28} color={(viewerIndex ?? 0) <= 0 ? '#555555' : '#FFFFFF'} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.viewerNavBtn}
+              disabled={(viewerIndex ?? 0) >= pages.length - 1}
+              onPress={() => setViewerIndex((i) => Math.min(pages.length - 1, (i ?? 0) + 1))}
+            >
+              <Ionicons
+                name="chevron-forward"
+                size={28}
+                color={(viewerIndex ?? 0) >= pages.length - 1 ? '#555555' : '#FFFFFF'}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PDF export settings (FR-20, FR-21, FR-22) */}
+      <Modal visible={pdfModalVisible} transparent animationType="slide" onRequestClose={() => setPdfModalVisible(false)}>
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, paddingBottom: Math.max(insets.bottom, 20) + 12 }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('exportPdf')}</Text>
               <TouchableOpacity onPress={() => setPdfModalVisible(false)}>
@@ -272,16 +359,12 @@ export default function DocumentDetailScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Page Size Option */}
             <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('pageSize')}</Text>
             <View style={styles.pillRow}>
               {(['A4', 'Letter', 'Fit'] as PdfPageSize[]).map((sz) => (
                 <TouchableOpacity
                   key={sz}
-                  style={[
-                    styles.pill,
-                    { backgroundColor: pageSize === sz ? colors.primary : colors.surfaceVariant },
-                  ]}
+                  style={[styles.pill, { backgroundColor: pageSize === sz ? colors.primary : colors.surfaceVariant }]}
                   onPress={() => setPageSize(sz)}
                 >
                   <Text style={[styles.pillText, { color: pageSize === sz ? colors.primaryContrast : colors.text }]}>
@@ -291,16 +374,12 @@ export default function DocumentDetailScreen() {
               ))}
             </View>
 
-            {/* Quality Option */}
             <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('quality')}</Text>
             <View style={styles.pillRow}>
               {(['low', 'medium', 'high'] as PdfQuality[]).map((q) => (
                 <TouchableOpacity
                   key={q}
-                  style={[
-                    styles.pill,
-                    { backgroundColor: quality === q ? colors.primary : colors.surfaceVariant },
-                  ]}
+                  style={[styles.pill, { backgroundColor: quality === q ? colors.primary : colors.surfaceVariant }]}
                   onPress={() => setQuality(q)}
                 >
                   <Text style={[styles.pillText, { color: quality === q ? colors.primaryContrast : colors.text }]}>
@@ -325,57 +404,36 @@ export default function DocumentDetailScreen() {
         </View>
       </Modal>
 
-      {/* Move to Folder Modal */}
-      <Modal visible={moveModalVisible} transparent animationType="fade">
+      {/* Move to folder */}
+      <Modal visible={moveModalVisible} transparent animationType="fade" onRequestClose={() => setMoveModalVisible(false)}>
         <View style={[styles.modalCenterOverlay, { backgroundColor: colors.overlay }]}>
-          <View style={[styles.moveModalCard, { backgroundColor: colors.surface }]}>
+          <View style={[styles.centerCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('moveToFolder')}</Text>
-            <ScrollView style={{ maxHeight: 240, marginVertical: 12 }}>
-              <TouchableOpacity
-                style={[
-                  styles.folderOptionItem,
-                  document.folder_id === null && { backgroundColor: colors.primaryLight },
-                  { borderBottomColor: colors.border },
-                ]}
-                onPress={() => handleSelectFolder(null)}
-              >
-                <Ionicons name="folder-outline" size={20} color={colors.primary} />
-                <Text style={[styles.folderOptionText, { color: colors.text }]}>{t('noFolderRoot')}</Text>
-                {document.folder_id === null && (
-                  <Ionicons name="checkmark" size={20} color={colors.primary} />
-                )}
-              </TouchableOpacity>
-              {folders.map((f) => (
-                <TouchableOpacity
-                  key={f.id}
-                  style={[
-                    styles.folderOptionItem,
-                    document.folder_id === f.id && { backgroundColor: colors.primaryLight },
-                    { borderBottomColor: colors.border },
-                  ]}
-                  onPress={() => handleSelectFolder(f.id)}
-                >
-                  <Ionicons name="folder" size={20} color={colors.primary} />
-                  <Text style={[styles.folderOptionText, { color: colors.text }]}>{f.name}</Text>
-                  {document.folder_id === f.id && (
-                    <Ionicons name="checkmark" size={20} color={colors.primary} />
-                  )}
-                </TouchableOpacity>
-              ))}
+            <ScrollView style={styles.folderList}>
+              {[{ id: null as string | null, name: t('noFolderRoot') }, ...folders].map((f) => {
+                const selected = document.folder_id === f.id;
+                return (
+                  <TouchableOpacity
+                    key={f.id ?? 'root'}
+                    style={[styles.folderOptionItem, selected && { backgroundColor: colors.primaryLight }]}
+                    onPress={() => handleSelectFolder(f.id)}
+                  >
+                    <Ionicons name={f.id ? 'folder' : 'folder-outline'} size={20} color={colors.primary} />
+                    <Text style={[styles.folderOptionText, { color: colors.text }]}>{f.name}</Text>
+                    {selected && <Ionicons name="checkmark" size={20} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
-            <ActionButton
-              title={t('cancel')}
-              variant="outline"
-              onPress={() => setMoveModalVisible(false)}
-            />
+            <ActionButton title={t('cancel')} variant="outline" onPress={() => setMoveModalVisible(false)} />
           </View>
         </View>
       </Modal>
 
-      {/* Rename Modal */}
-      <Modal visible={renameModalVisible} transparent animationType="fade">
+      {/* Rename */}
+      <Modal visible={renameModalVisible} transparent animationType="fade" onRequestClose={() => setRenameModalVisible(false)}>
         <View style={[styles.modalCenterOverlay, { backgroundColor: colors.overlay }]}>
-          <View style={[styles.moveModalCard, { backgroundColor: colors.surface }]}>
+          <View style={[styles.centerCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('rename')}</Text>
             <TextInput
               style={[
@@ -391,13 +449,9 @@ export default function DocumentDetailScreen() {
                 title={t('cancel')}
                 variant="outline"
                 onPress={() => setRenameModalVisible(false)}
-                style={{ flex: 1 }}
+                style={styles.flex1}
               />
-              <ActionButton
-                title={t('save')}
-                onPress={handleSaveRename}
-                style={{ flex: 1 }}
-              />
+              <ActionButton title={t('save')} onPress={handleSaveRename} style={styles.flex1} />
             </View>
           </View>
         </View>
@@ -405,6 +459,20 @@ export default function DocumentDetailScreen() {
     </View>
   );
 }
+
+const BarButton: React.FC<{
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  color: string;
+  onPress: () => void;
+}> = ({ icon, label, color, onPress }) => (
+  <TouchableOpacity style={styles.barBtn} onPress={onPress}>
+    <Ionicons name={icon} size={22} color={color} />
+    <Text style={[styles.barBtnText, { color }]} numberOfLines={1}>
+      {label}
+    </Text>
+  </TouchableOpacity>
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -415,55 +483,71 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  infoBar: {
+  flex1: {
+    flex: 1,
+  },
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   titleArea: {
     flex: 1,
+    paddingHorizontal: 4,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   docTitle: {
     fontSize: 17,
     fontWeight: '700',
+    flexShrink: 1,
   },
   docSub: {
-    fontSize: 13,
+    fontSize: 12,
     marginTop: 2,
   },
-  renameBtn: {
-    padding: 8,
+  gridContent: {
+    padding: 10,
+    paddingBottom: 100,
+  },
+  gridRow: {
+    gap: 10,
+    marginBottom: 10,
+  },
+  pageCell: {
+    flex: 1,
+    maxWidth: '50%',
+    aspectRatio: 3 / 4,
     borderRadius: 8,
-  },
-  scrollPages: {
-    padding: 16,
-    gap: 16,
-    paddingBottom: 90,
-  },
-  pageCard: {
-    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
-    borderWidth: 1,
-    position: 'relative',
-    height: 480,
   },
-  pageImage: {
-    width: '100%',
-    height: '100%',
+  pageCellInner: {
+    flex: 1,
   },
-  pageIndicator: {
+  pageNum: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    left: 8,
+    bottom: 8,
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  pageIndicatorText: {
+  pageNumText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
@@ -473,32 +557,69 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 72,
-    borderTopWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingHorizontal: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 8,
   },
-  toolAction: {
+  barBtn: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 3,
+  },
+  barBtnText: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  exportOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    gap: 10,
   },
-  toolActionText: {
-    fontSize: 12,
+  exportText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  viewer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  viewerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  viewerTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
     fontWeight: '600',
+  },
+  viewerBody: {
+    flex: 1,
+  },
+  viewerNav: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+  },
+  viewerNavBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
   modalCenterOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
@@ -507,9 +628,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
-    paddingBottom: 32,
   },
-  moveModalCard: {
+  centerCard: {
     width: '100%',
     maxWidth: 340,
     borderRadius: 16,
@@ -552,7 +672,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 12,
     fontSize: 15,
-    marginTop: 8,
+    marginTop: 12,
     marginBottom: 16,
   },
   watermarkBadge: {
@@ -571,13 +691,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  folderList: {
+    maxHeight: 240,
+    marginVertical: 12,
+  },
   folderOptionItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingVertical: 12,
     paddingHorizontal: 8,
-    borderBottomWidth: 1,
     borderRadius: 8,
   },
   folderOptionText: {

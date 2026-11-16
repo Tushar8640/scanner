@@ -23,7 +23,8 @@ export class ScannerService implements IScannerService {
 
             if (result?.status === 'success' && result.scannedImages && result.scannedImages.length > 0) {
               return {
-                pages: result.scannedImages.map((uri: string) => ({ uri })),
+                // The native scanner has already detected edges and corrected perspective
+                pages: result.scannedImages.map((uri: string) => ({ uri, cropped: true })),
               };
             }
             if (result?.status === 'cancel') {

@@ -23,8 +23,11 @@ import { DocumentCard } from '@/ui/components/DocumentCard';
 import { FolderTabs } from '@/ui/components/FolderTabs';
 import { SearchBar } from '@/ui/components/SearchBar';
 import { ActionButton } from '@/ui/components/ActionButton';
+import { ActionSheet, ActionSheetItem } from '@/ui/components/ActionSheet';
 import { useThemeColors } from '@/core/theme/colors';
 import { Document, Folder } from '@/core/types';
+
+type ViewMode = 'list' | 'grid';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -49,15 +52,17 @@ export default function HomeScreen() {
   } = useDocumentStore();
   const { t } = useSettingsStore();
 
-  const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [sortSheetVisible, setSortSheetVisible] = useState(false);
+  const [menuSheetVisible, setMenuSheetVisible] = useState(false);
+  const [docSheetTarget, setDocSheetTarget] = useState<Document | null>(null);
   const [folderModalVisible, setFolderModalVisible] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-
-  // Move to folder modal
   const [moveModalVisible, setMoveModalVisible] = useState(false);
   const [targetDoc, setTargetDoc] = useState<Document | null>(null);
 
@@ -73,7 +78,7 @@ export default function HomeScreen() {
       }
     } catch (error: any) {
       setIsProcessing(false);
-      Alert.alert('Error', error.message || 'Failed to scan document');
+      Alert.alert(t('error'), error.message || 'Failed to scan document');
     }
   };
 
@@ -89,37 +94,28 @@ export default function HomeScreen() {
       }
     } catch (error: any) {
       setIsProcessing(false);
-      Alert.alert('Error', error.message || 'Failed to import from gallery');
+      Alert.alert(t('error'), error.message || 'Failed to import from gallery');
     }
   };
 
   const handleShare = async (doc: Document) => {
     if (!doc.pdf_path) {
-      Alert.alert('Info', 'PDF file has not been generated yet. Open the document to export PDF.');
+      // The PDF is generated on the document screen; open it there
+      router.push(`/document/${doc.id}`);
       return;
     }
     try {
       await PdfService.shareFile(doc.pdf_path, 'application/pdf', doc.title);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to share file');
+      Alert.alert(t('error'), e.message || 'Failed to share file');
     }
   };
 
   const handleDelete = (docId: string) => {
-    Alert.alert(
-      t('deleteConfirmTitle'),
-      t('deleteConfirmMsg'),
-      [
-        { text: t('cancel'), style: 'cancel' },
-        {
-          text: t('delete'),
-          style: 'destructive',
-          onPress: async () => {
-            await softDelete(docId);
-          },
-        },
-      ]
-    );
+    Alert.alert(t('deleteConfirmTitle'), t('deleteConfirmMsg'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('delete'), style: 'destructive', onPress: () => softDelete(docId) },
+    ]);
   };
 
   const handleOpenRename = (doc: Document) => {
@@ -145,28 +141,17 @@ export default function HomeScreen() {
   };
 
   const handleLongPressFolder = (folder: Folder) => {
-    Alert.alert(
-      t('deleteFolder'),
-      `"${folder.name}"? ${t('deleteFolderConfirm')}`,
-      [
-        { text: t('cancel'), style: 'cancel' },
-        {
-          text: t('delete'),
-          style: 'destructive',
-          onPress: async () => {
-            if (activeFolderId === folder.id) {
-              setActiveFolderId(null);
-            }
-            await deleteFolder(folder.id);
-          },
+    Alert.alert(t('deleteFolder'), `"${folder.name}"? ${t('deleteFolderConfirm')}`, [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: async () => {
+          if (activeFolderId === folder.id) setActiveFolderId(null);
+          await deleteFolder(folder.id);
         },
-      ]
-    );
-  };
-
-  const handleOpenMoveToFolder = (doc: Document) => {
-    setTargetDoc(doc);
-    setMoveModalVisible(true);
+      },
+    ]);
   };
 
   const handleSelectTargetFolder = async (folderId: string | null) => {
@@ -184,47 +169,69 @@ export default function HomeScreen() {
     { label: t('sortNameDesc'), value: 'nameDesc' },
   ];
 
-  return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Top Header */}
-      <View style={[styles.header, { backgroundColor: colors.surface }]}>
-        <View style={styles.headerTitleContainer}>
-          <Ionicons name="scan-outline" size={24} color={colors.primary} />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>{t('appName')}</Text>
-        </View>
+  const sortItems: ActionSheetItem[] = sortOptions.map((opt) => ({
+    key: opt.value,
+    label: opt.label,
+    icon: 'swap-vertical',
+    selected: sortBy === opt.value,
+    onPress: () => setSortBy(opt.value),
+  }));
 
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.headerBtn}
-            onPress={() => setSortModalVisible(true)}
-          >
-            <Ionicons name="swap-vertical" size={22} color={colors.text} />
-          </TouchableOpacity>
+  const menuItems: ActionSheetItem[] = [
+    { key: 'sort', label: t('sortBy'), icon: 'swap-vertical', onPress: () => setSortSheetVisible(true) },
+    { key: 'folder', label: t('createFolder'), icon: 'folder-open-outline', onPress: () => setFolderModalVisible(true) },
+    { key: 'trash', label: t('trash'), icon: 'trash-outline', onPress: () => router.push('/trash') },
+    { key: 'settings', label: t('settings'), icon: 'settings-outline', onPress: () => router.push('/settings') },
+  ];
 
-          <TouchableOpacity
-            style={styles.headerBtn}
-            onPress={() => router.push('/trash')}
-          >
-            <Ionicons name="trash-outline" size={22} color={colors.text} />
-          </TouchableOpacity>
+  const docItems: ActionSheetItem[] = docSheetTarget
+    ? [
+        { key: 'share', label: t('share'), icon: 'share-social-outline', onPress: () => handleShare(docSheetTarget) },
+        { key: 'rename', label: t('rename'), icon: 'create-outline', onPress: () => handleOpenRename(docSheetTarget) },
+        {
+          key: 'move',
+          label: t('moveToFolder'),
+          icon: 'folder-outline',
+          onPress: () => {
+            setTargetDoc(docSheetTarget);
+            setMoveModalVisible(true);
+          },
+        },
+        {
+          key: 'delete',
+          label: t('delete'),
+          icon: 'trash-outline',
+          destructive: true,
+          onPress: () => handleDelete(docSheetTarget.id),
+        },
+      ]
+    : [];
 
-          <TouchableOpacity
-            style={styles.headerBtn}
-            onPress={() => router.push('/settings')}
-          >
-            <Ionicons name="settings-outline" size={22} color={colors.text} />
+  const quickTools: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap; tint: string; onPress: () => void }[] = [
+    { key: 'scan', label: t('smartScan'), icon: 'scan', tint: colors.primary, onPress: handleCameraScan },
+    { key: 'import', label: t('importImages'), icon: 'images', tint: '#F59E0B', onPress: handleGalleryImport },
+    { key: 'folder', label: t('createFolder'), icon: 'folder-open', tint: '#3B82F6', onPress: () => setFolderModalVisible(true) },
+    { key: 'trash', label: t('trash'), icon: 'trash', tint: '#EF4444', onPress: () => router.push('/trash') },
+  ];
+
+  const showSearch = searchVisible || searchQuery.length > 0;
+
+  const listHeader = (
+    <View>
+      {/* Quick tools */}
+      <View style={[styles.toolsCard, { backgroundColor: colors.surface }]}>
+        {quickTools.map((tool) => (
+          <TouchableOpacity key={tool.key} style={styles.toolItem} onPress={tool.onPress} disabled={isProcessing}>
+            <View style={[styles.toolIcon, { backgroundColor: `${tool.tint}1A` }]}>
+              <Ionicons name={tool.icon} size={24} color={tool.tint} />
+            </View>
+            <Text style={[styles.toolLabel, { color: colors.text }]} numberOfLines={1}>
+              {tool.label}
+            </Text>
           </TouchableOpacity>
-        </View>
+        ))}
       </View>
 
-      {/* Search Bar */}
-      <SearchBar
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-        placeholder={t('search')}
-      />
-
-      {/* Folders Tabs */}
       <FolderTabs
         folders={folders}
         activeFolderId={activeFolderId}
@@ -234,32 +241,83 @@ export default function HomeScreen() {
         allLabel={t('allDocuments')}
       />
 
-      {/* Document List */}
+      <View style={styles.sectionHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          {t('recentDocuments')} <Text style={{ color: colors.textSecondary }}>({documents.length})</Text>
+        </Text>
+        <TouchableOpacity onPress={() => setSortSheetVisible(true)} style={styles.sortLink}>
+          <Ionicons name="swap-vertical" size={16} color={colors.textSecondary} />
+          <Text style={[styles.sortLinkText, { color: colors.textSecondary }]}>
+            {sortOptions.find((o) => o.value === sortBy)?.label}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      {/* Header */}
+      <View style={[styles.header, { backgroundColor: colors.background }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('appName')}</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => {
+              if (showSearch) {
+                setSearchQuery('');
+                setSearchVisible(false);
+              } else {
+                setSearchVisible(true);
+              }
+            }}
+            accessibilityLabel={t('search')}
+          >
+            <Ionicons name={showSearch ? 'close' : 'search'} size={22} color={colors.text} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
+            accessibilityLabel="Toggle view"
+          >
+            <Ionicons name={viewMode === 'list' ? 'grid-outline' : 'list-outline'} size={22} color={colors.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerBtn} onPress={() => setMenuSheetVisible(true)} accessibilityLabel="More">
+            <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {showSearch && <SearchBar value={searchQuery} onChangeText={setSearchQuery} placeholder={t('search')} />}
+
+      {/* Documents */}
       <FlatList
+        key={viewMode}
         data={documents}
+        numColumns={viewMode === 'grid' ? 3 : 1}
         keyExtractor={(item) => item.id}
+        ListHeaderComponent={listHeader}
         renderItem={({ item }) => (
           <DocumentCard
             document={item}
+            variant={viewMode}
             onPress={() => router.push(`/document/${item.id}`)}
-            onShare={() => handleShare(item)}
-            onDelete={() => handleDelete(item.id)}
-            onRename={() => handleOpenRename(item)}
-            onMoveToFolder={() => handleOpenMoveToFolder(item)}
+            onMore={() => setDocSheetTarget(item)}
           />
         )}
-        contentContainerStyle={[
-          styles.listContent,
-          documents.length === 0 && styles.emptyListContent,
-        ]}
-        refreshControl={
-          <RefreshControl refreshing={isLoading} onRefresh={loadAll} tintColor={colors.primary} />
+        ItemSeparatorComponent={
+          viewMode === 'list'
+            ? () => <View style={[styles.separator, { backgroundColor: colors.border }]} />
+            : undefined
         }
+        columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
+        contentContainerStyle={styles.listContent}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadAll} tintColor={colors.primary} />}
         ListEmptyComponent={
           !isLoading ? (
             <View style={styles.emptyContainer}>
               <View style={[styles.emptyIconBg, { backgroundColor: colors.primaryLight }]}>
-                <Ionicons name="documents-outline" size={48} color={colors.primary} />
+                <Ionicons name="document-text-outline" size={44} color={colors.primary} />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('noDocuments')}</Text>
               <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>{t('noDocumentsDesc')}</Text>
@@ -268,48 +326,54 @@ export default function HomeScreen() {
         }
       />
 
-      {/* Bottom Floating Action Buttons */}
+      {/* Bottom navigation with raised camera button */}
       <View
         style={[
-          styles.bottomBar,
-          {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.border,
-            paddingBottom: Math.max(insets.bottom, 16),
-          },
+          styles.bottomNav,
+          { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 8) },
         ]}
       >
-        <TouchableOpacity
-          style={[styles.galleryButton, { backgroundColor: colors.primaryLight }]}
-          onPress={handleGalleryImport}
-          disabled={isProcessing}
-        >
-          <Ionicons name="images-outline" size={20} color={colors.primary} />
-          <Text style={[styles.galleryButtonText, { color: colors.primary }]} numberOfLines={1}>
-            {t('importGallery')}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.scanButton, { backgroundColor: colors.primary }]}
-          onPress={handleCameraScan}
-          disabled={isProcessing}
-        >
-          {isProcessing ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
-          ) : (
-            <>
-              <Ionicons name="camera" size={20} color={colors.primaryContrast} />
-              <Text style={[styles.scanButtonText, { color: colors.primaryContrast }]} numberOfLines={1}>
-                {t('scan')}
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
+        <NavItem icon="home" label={t('home')} active color={colors.primary} onPress={() => setActiveFolderId(null)} />
+        <NavItem icon="images-outline" label={t('importShort')} color={colors.textSecondary} onPress={handleGalleryImport} />
+        <View style={styles.fabSlot}>
+          <TouchableOpacity
+            style={[styles.fab, { backgroundColor: colors.primary, borderColor: colors.surface }]}
+            onPress={handleCameraScan}
+            disabled={isProcessing}
+            accessibilityLabel={t('scan')}
+          >
+            {isProcessing ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Ionicons name="camera" size={30} color="#FFFFFF" />
+            )}
+          </TouchableOpacity>
+        </View>
+        <NavItem icon="trash-outline" label={t('trash')} color={colors.textSecondary} onPress={() => router.push('/trash')} />
+        <NavItem
+          icon="settings-outline"
+          label={t('settings')}
+          color={colors.textSecondary}
+          onPress={() => router.push('/settings')}
+        />
       </View>
 
-      {/* Create Folder Modal */}
-      <Modal visible={folderModalVisible} transparent animationType="fade">
+      <ActionSheet visible={menuSheetVisible} items={menuItems} onClose={() => setMenuSheetVisible(false)} />
+      <ActionSheet
+        visible={sortSheetVisible}
+        title={t('sortBy')}
+        items={sortItems}
+        onClose={() => setSortSheetVisible(false)}
+      />
+      <ActionSheet
+        visible={docSheetTarget !== null}
+        title={docSheetTarget?.title}
+        items={docItems}
+        onClose={() => setDocSheetTarget(null)}
+      />
+
+      {/* Create folder */}
+      <Modal visible={folderModalVisible} transparent animationType="fade" onRequestClose={() => setFolderModalVisible(false)}>
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('createFolder')}</Text>
@@ -320,7 +384,7 @@ export default function HomeScreen() {
               ]}
               value={newFolderName}
               onChangeText={setNewFolderName}
-              placeholder="Enter folder name..."
+              placeholder={t('folderNamePlaceholder')}
               placeholderTextColor={colors.textMuted}
               autoFocus
             />
@@ -331,18 +395,14 @@ export default function HomeScreen() {
                 onPress={() => setFolderModalVisible(false)}
                 style={styles.modalActionBtn}
               />
-              <ActionButton
-                title={t('save')}
-                onPress={handleCreateFolder}
-                style={styles.modalActionBtn}
-              />
+              <ActionButton title={t('save')} onPress={handleCreateFolder} style={styles.modalActionBtn} />
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Rename Document Modal */}
-      <Modal visible={renameModalVisible} transparent animationType="fade">
+      {/* Rename document */}
+      <Modal visible={renameModalVisible} transparent animationType="fade" onRequestClose={() => setRenameModalVisible(false)}>
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('rename')}</Text>
@@ -362,53 +422,32 @@ export default function HomeScreen() {
                 onPress={() => setRenameModalVisible(false)}
                 style={styles.modalActionBtn}
               />
-              <ActionButton
-                title={t('save')}
-                onPress={handleSaveRename}
-                style={styles.modalActionBtn}
-              />
+              <ActionButton title={t('save')} onPress={handleSaveRename} style={styles.modalActionBtn} />
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Move to Folder Modal */}
-      <Modal visible={moveModalVisible} transparent animationType="fade">
+      {/* Move to folder */}
+      <Modal visible={moveModalVisible} transparent animationType="fade" onRequestClose={() => setMoveModalVisible(false)}>
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, maxHeight: 400 }]}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, maxHeight: 420 }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('moveToFolder')}</Text>
-            <ScrollView style={{ marginBottom: 16 }}>
-              <TouchableOpacity
-                style={[
-                  styles.folderOptionItem,
-                  targetDoc?.folder_id === null && { backgroundColor: colors.primaryLight },
-                  { borderBottomColor: colors.border },
-                ]}
-                onPress={() => handleSelectTargetFolder(null)}
-              >
-                <Ionicons name="folder-outline" size={20} color={colors.primary} />
-                <Text style={[styles.folderOptionText, { color: colors.text }]}>{t('noFolderRoot')}</Text>
-                {targetDoc?.folder_id === null && (
-                  <Ionicons name="checkmark" size={20} color={colors.primary} />
-                )}
-              </TouchableOpacity>
-              {folders.map((f) => (
-                <TouchableOpacity
-                  key={f.id}
-                  style={[
-                    styles.folderOptionItem,
-                    targetDoc?.folder_id === f.id && { backgroundColor: colors.primaryLight },
-                    { borderBottomColor: colors.border },
-                  ]}
-                  onPress={() => handleSelectTargetFolder(f.id)}
-                >
-                  <Ionicons name="folder" size={20} color={colors.primary} />
-                  <Text style={[styles.folderOptionText, { color: colors.text }]}>{f.name}</Text>
-                  {targetDoc?.folder_id === f.id && (
-                    <Ionicons name="checkmark" size={20} color={colors.primary} />
-                  )}
-                </TouchableOpacity>
-              ))}
+            <ScrollView style={styles.folderList}>
+              {[{ id: null as string | null, name: t('noFolderRoot') }, ...folders].map((f) => {
+                const selected = targetDoc?.folder_id === f.id;
+                return (
+                  <TouchableOpacity
+                    key={f.id ?? 'root'}
+                    style={[styles.folderOptionItem, selected && { backgroundColor: colors.primaryLight }]}
+                    onPress={() => handleSelectTargetFolder(f.id)}
+                  >
+                    <Ionicons name={f.id ? 'folder' : 'folder-outline'} size={20} color={colors.primary} />
+                    <Text style={[styles.folderOptionText, { color: colors.text }]}>{f.name}</Text>
+                    {selected && <Ionicons name="checkmark" size={20} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
             <ActionButton
               title={t('cancel')}
@@ -421,49 +460,24 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
-
-      {/* Sort Options Modal */}
-      <Modal visible={sortModalVisible} transparent animationType="fade">
-        <TouchableOpacity
-          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
-          activeOpacity={1}
-          onPress={() => setSortModalVisible(false)}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('sortBy')}</Text>
-            {sortOptions.map((opt) => (
-              <TouchableOpacity
-                key={opt.value}
-                style={[
-                  styles.sortOptionItem,
-                  sortBy === opt.value && { backgroundColor: colors.primaryLight },
-                  { borderBottomColor: colors.border },
-                ]}
-                onPress={() => {
-                  setSortBy(opt.value);
-                  setSortModalVisible(false);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.sortOptionText,
-                    { color: colors.text },
-                    sortBy === opt.value && { color: colors.primary, fontWeight: '600' },
-                  ]}
-                >
-                  {opt.label}
-                </Text>
-                {sortBy === opt.value && (
-                  <Ionicons name="checkmark" size={20} color={colors.primary} />
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </View>
   );
 }
+
+const NavItem: React.FC<{
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  color: string;
+  active?: boolean;
+  onPress: () => void;
+}> = ({ icon, label, color, active, onPress }) => (
+  <TouchableOpacity style={styles.navItem} onPress={onPress}>
+    <Ionicons name={icon} size={22} color={color} />
+    <Text style={[styles.navLabel, { color, fontWeight: active ? '700' : '500' }]} numberOfLines={1}>
+      {label}
+    </Text>
+  </TouchableOpacity>
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -473,110 +487,141 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  headerTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    paddingLeft: 16,
+    paddingRight: 8,
+    paddingVertical: 8,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
   },
   headerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  listContent: {
-    paddingBottom: 110,
-    paddingTop: 8,
+  toolsCard: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 4,
+    paddingVertical: 14,
+    borderRadius: 14,
   },
-  emptyListContent: {
-    flexGrow: 1,
+  toolItem: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 6,
+  },
+  toolIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
     justifyContent: 'center',
+  },
+  toolLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  sortLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  sortLinkText: {
+    fontSize: 12,
+  },
+  listContent: {
+    paddingBottom: 120,
+  },
+  gridRow: {
+    paddingHorizontal: 10,
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 88,
   },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 32,
+    paddingTop: 48,
   },
   emptyIconBg: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   emptyDesc: {
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 20,
   },
-  bottomBar: {
+  bottomNav: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
+    bottom: 0,
     flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 12,
-    paddingHorizontal: 20,
-    borderTopWidth: 1,
-    gap: 12,
+    alignItems: 'flex-end',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 8,
   },
-  galleryButton: {
+  navItem: {
     flex: 1,
-    height: 48,
-    borderRadius: 24,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-    gap: 6,
+    gap: 2,
   },
-  galleryButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
+  navLabel: {
+    fontSize: 11,
   },
-  scanButton: {
+  fabSlot: {
     flex: 1,
-    height: 48,
-    borderRadius: 24,
-    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fab: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    marginTop: -30,
+    borderWidth: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-    gap: 6,
-    shadowOffset: { width: 0, height: 3 },
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  scanButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    shadowRadius: 8,
+    elevation: 6,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
@@ -609,15 +654,8 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 44,
   },
-  sortOptionItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-  },
-  sortOptionText: {
-    fontSize: 15,
+  folderList: {
+    marginBottom: 16,
   },
   folderOptionItem: {
     flexDirection: 'row',
@@ -625,7 +663,6 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 12,
     paddingHorizontal: 8,
-    borderBottomWidth: 1,
     borderRadius: 8,
   },
   folderOptionText: {

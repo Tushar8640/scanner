@@ -65,7 +65,7 @@ export const DocumentPageView: React.FC<DocumentPageViewProps> = ({
   if (loading || !base64) {
     return (
       <View style={[styles.center, { backgroundColor }, style]}>
-        <ActivityIndicator size="large" color="#0D6EFD" />
+        <ActivityIndicator size="large" color="#0FA58E" />
       </View>
     );
   }
