@@ -1,4 +1,4 @@
-export type PageFilter = 'original' | 'magic' | 'enhanced' | 'bw' | 'grayscale';
+export type PageFilter = 'original' | 'lighten' | 'magic' | 'enhanced' | 'noshadow' | 'bw' | 'grayscale';
 export type PageRotation = 0 | 90 | 180 | 270;
 export type PdfPageSize = 'A4' | 'Letter' | 'Fit';
 export type PdfQuality = 'low' | 'medium' | 'high';

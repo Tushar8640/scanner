@@ -28,7 +28,7 @@ function formatDocDate(ms: number): string {
 }
 
 /** Opens the Files tab and asks it to focus search or open Create Folder. */
-function openFiles(action: 'search' | 'newFolder') {
+function openFiles(action: 'search' | 'newFolder' | 'select') {
   router.navigate({ pathname: '/files', params: { [action]: String(Date.now()) } });
 }
 
@@ -60,7 +60,10 @@ export default function HomeScreen() {
   const tools: QuickTool[] = [
     { key: 'scan', label: 'smartScan', icon: 'scan', tint: colors.primary, onPress: scanWithCamera },
     { key: 'import', label: 'importImages', icon: 'image', tint: '#3B82F6', onPress: importImages },
+    { key: 'id', label: 'idCard', icon: 'card', tint: colors.primary, onPress: () => router.push('/id-card') },
     { key: 'ocr', label: 'extractText', icon: 'text', tint: colors.primary, onPress: () => router.push('/extract-text') },
+    { key: 'qr', label: 'scanQr', icon: 'qr-code', tint: '#8B5CF6', onPress: () => router.push('/qr-scan') },
+    { key: 'merge', label: 'mergeDocs', icon: 'git-merge', tint: '#F59E0B', onPress: () => openFiles('select') },
     {
       key: 'folder',
       label: 'createFolder',
@@ -68,8 +71,6 @@ export default function HomeScreen() {
       tint: '#3B82F6',
       onPress: () => openFiles('newFolder'),
     },
-    { key: 'trash', label: 'trash', icon: 'trash', tint: '#EF4444', onPress: () => router.push('/trash') },
-    { key: 'settings', label: 'settings', icon: 'settings', tint: '#64748B', onPress: () => router.push('/settings') },
     { key: 'all', label: 'allTools', icon: 'apps', tint: '#10B981', onPress: () => router.navigate('/tools') },
   ];
 

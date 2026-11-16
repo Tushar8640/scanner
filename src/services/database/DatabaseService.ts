@@ -251,7 +251,7 @@ export class DatabaseService {
 
   static async insertPages(pages: Page[]): Promise<void> {
     const db = await this.getDb();
-    const validFilters = ['original', 'magic', 'enhanced', 'bw', 'grayscale'];
+    const validFilters = ['original', 'lighten', 'magic', 'enhanced', 'noshadow', 'bw', 'grayscale'];
 
     for (const page of pages) {
       const safeFilter = validFilters.includes(page.filter?.toLowerCase()) ? page.filter.toLowerCase() : 'magic';

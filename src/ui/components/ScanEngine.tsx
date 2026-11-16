@@ -4,6 +4,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
 import { EDGE_ENGINE_HTML } from '@/services/scanner/edgeEngineHtml';
 import { Quad } from '@/services/scanner/quad';
+import type { FilterRecipe } from '@/services/image/FilterUtils';
 
 export interface DetectResult {
   /** Detected document corners (normalised), or null when no document was found. */
@@ -24,6 +25,10 @@ export interface ScanEngineApi {
    * React Native and the engine then see exactly the same pixels, so crop handles line up.
    */
   prepare(uri: string): Promise<PrepareResult>;
+  /** Places one or two images (ID card front / back) on a white A4 page. Returns a file URI. */
+  composeIdCard(uris: string[]): Promise<string>;
+  /** Bakes a filter recipe and rotation into a JPEG (for saving or sharing images). Returns a file URI. */
+  renderFiltered(uri: string, recipe: FilterRecipe, rotation: number): Promise<string>;
   /** Perspective-corrects the image to the given corners and returns a new file URI. */
   warp(uri: string, corners: Quad): Promise<string>;
 }
@@ -108,7 +113,7 @@ export function ScanEngineProvider({ children }: { children: React.ReactNode }) 
 
   const run = useCallback(
     <T,>(
-      op: 'detect' | 'warp' | 'prepare',
+      op: 'detect' | 'warp' | 'prepare' | 'render',
       uri: string,
       extra: Record<string, unknown> = {},
       /** Key the engine caches the image under afterwards (prepare re-keys to its output file). */
@@ -150,6 +155,27 @@ export function ScanEngineProvider({ children }: { children: React.ReactNode }) 
         await FileSystem.writeAsStringAsync(out, res.b64, { encoding: FileSystem.EncodingType.Base64 });
         return { uri: out, corners: res.corners, width: res.width, height: res.height };
       },
+      composeIdCard: async (uris) => {
+        const task = async () => {
+          await readyRef.current.promise;
+          const images = await Promise.all(
+            uris.map((u) => FileSystem.readAsStringAsync(u, { encoding: FileSystem.EncodingType.Base64 }))
+          );
+          return call<{ b64: string }>({ op: 'compose', images });
+        };
+        const p = queueRef.current.then(task, task);
+        queueRef.current = p.catch(() => undefined);
+        const res = await p;
+        const out = newCacheFile('id_card');
+        await FileSystem.writeAsStringAsync(out, res.b64, { encoding: FileSystem.EncodingType.Base64 });
+        return out;
+      },
+      renderFiltered: async (uri, recipe, rotation) => {
+        const res = await run<{ b64: string }>('render', uri, { recipe, rotation });
+        const out = newCacheFile('scan_page');
+        await FileSystem.writeAsStringAsync(out, res.b64, { encoding: FileSystem.EncodingType.Base64 });
+        return out;
+      },
       warp: async (uri, corners) => {
         const res = await run<{ b64: string }>('warp', uri, { corners });
         const out = newCacheFile('scan_crop');
@@ -157,7 +183,7 @@ export function ScanEngineProvider({ children }: { children: React.ReactNode }) 
         return out;
       },
     };
-  }, [run]);
+  }, [run, call]);
 
   return (
     <ScanEngineContext.Provider value={api}>

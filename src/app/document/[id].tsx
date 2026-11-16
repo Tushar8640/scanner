@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -11,218 +11,192 @@ import {
   ActivityIndicator,
   useWindowDimensions,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Document, Page, PdfPageSize, PdfQuality } from '@/core/types';
+import { Document, Page, PageRotation, PdfPageSize, PdfQuality } from '@/core/types';
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { PdfService } from '@/services/pdf/PdfService';
-import { StorageService } from '@/services/storage/StorageService';
+import { GalleryService } from '@/services/storage/GalleryService';
+import { getFilterRecipe } from '@/services/image/FilterUtils';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { ActionButton } from '@/ui/components/ActionButton';
-import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { ActionSheet, ActionSheetItem } from '@/ui/components/ActionSheet';
+import { AnnotateModal, AnnotateMode } from '@/ui/components/AnnotateModal';
+import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { DraggableGrid, moveItem } from '@/ui/components/DraggableGrid';
-import { ImageService } from '@/services/image/ImageService';
+import { ScanEngineProvider, useScanEngine } from '@/ui/components/ScanEngine';
+import { scannerService } from '@/services/scanner/ScannerService';
 import { useThemeColors } from '@/core/theme/colors';
+import { ImageService } from '@/services/image/ImageService';
+import { StorageService } from '@/services/storage/StorageService';
 
-export default function DocumentDetailScreen() {
+const GRID_PADDING = 12;
+const GRID_GAP = 12;
+
+export default function DocumentScreen() {
+  // The scan engine renders filtered JPGs for "Save to Gallery"
+  return (
+    <ScanEngineProvider>
+      <DocumentDetail />
+    </ScanEngineProvider>
+  );
+}
+
+function safeFileName(title: string): string {
+  return title.replace(/[^a-zA-Z0-9_\-ঀ-৿]/g, '_');
+}
+
+function DocumentDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  const { updateTitle, softDelete, moveToFolder, folders, loadAll } = useDocumentStore();
+  const engine = useScanEngine();
+  const { updateTitle, softDelete, moveToFolder, folders, loadAll, replacePageImage, setPendingScanImages } = useDocumentStore();
   const { default_page_size, default_quality, t } = useSettingsStore();
+  const { width: windowWidth } = useWindowDimensions();
 
   const [document, setDocument] = useState<Document | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isExporting, setIsExporting] = useState(false);
-
-  // PDF Settings modal
+  const [busyText, setBusyText] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+  const [gridDragging, setGridDragging] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [annotate, setAnnotate] = useState<{ mode: AnnotateMode; page: Page } | null>(null);
+  const [sheet, setSheet] = useState<'more' | 'share' | 'add' | null>(null);
   const [pdfModalVisible, setPdfModalVisible] = useState(false);
   const [pageSize, setPageSize] = useState<PdfPageSize>(default_page_size);
   const [quality, setQuality] = useState<PdfQuality>(default_quality);
-
-  // Rename modal
-  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renameVisible, setRenameVisible] = useState(false);
   const [titleInput, setTitleInput] = useState('');
+  const [moveVisible, setMoveVisible] = useState(false);
 
-  // Move to folder modal
-  const [moveModalVisible, setMoveModalVisible] = useState(false);
-  const [moreSheetVisible, setMoreSheetVisible] = useState(false);
-  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const [gridDragging, setGridDragging] = useState(false);
-  const { width: windowWidth } = useWindowDimensions();
-  const cellWidth = (windowWidth - GRID_PADDING * 2 - GRID_GAP) / 2;
-
-  useEffect(() => {
-    let isMounted = true;
-    async function fetchDoc() {
-      if (!id) return;
-      try {
-        const doc = await DatabaseService.getDocumentById(id);
-        const pageList = await DatabaseService.getPagesByDocumentId(id);
-        if (isMounted) {
-          setDocument(doc);
-          setPages(pageList);
-          if (doc) {
-            setTitleInput(doc.title);
-          }
-          setLoading(false);
-        }
-      } catch (e) {
-        console.error('Failed to load document:', e);
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
+  const reload = useCallback(async () => {
+    if (!id) return;
+    try {
+      const doc = await DatabaseService.getDocumentById(id);
+      const list = await DatabaseService.getPagesByDocumentId(id);
+      setDocument(doc);
+      setPages(list);
+      if (doc) setTitleInput(doc.title);
+    } catch (e) {
+      console.error('Failed to load document:', e);
+    } finally {
+      setLoading(false);
     }
-
-    fetchDoc();
-    return () => {
-      isMounted = false;
-    };
   }, [id]);
 
-  const handleShare = async () => {
-    if (!document) return;
-    try {
-      setIsExporting(true);
-      let pdfPath = document.pdf_path;
-      let fileExists = false;
-      if (pdfPath) {
-        const info = await FileSystem.getInfoAsync(pdfPath);
-        fileExists = info.exists;
-      }
+  // Reload when returning from "Add pages"
+  useFocusEffect(
+    useCallback(() => {
+      reload();
+    }, [reload])
+  );
 
-      if (!pdfPath || !fileExists) {
-        pdfPath = await PdfService.generatePdf(document.id, pages, {
-          title: document.title,
-          pageSize,
-          quality,
-        });
-        await DatabaseService.updateDocument(document.id, { pdf_path: pdfPath });
-        setDocument((prev) => (prev ? { ...prev, pdf_path: pdfPath } : null));
-      }
-      setIsExporting(false);
-      const fileName = `${document.title.replace(/[^a-zA-Z0-9_\-\u0980-\u09FF]/g, '_')}.pdf`;
-      await PdfService.shareFile(pdfPath, 'application/pdf', fileName);
+  const columns = viewMode === 'list' ? 1 : 2;
+  const cellWidth = (windowWidth - GRID_PADDING * 2 - GRID_GAP * (columns - 1)) / columns;
+  const cellHeight = cellWidth * (4 / 3);
+
+  /* ---------- actions ---------- */
+
+  const ensurePdf = async (): Promise<string> => {
+    if (!document) throw new Error('No document');
+    if (document.pdf_path) {
+      const info = await FileSystem.getInfoAsync(document.pdf_path);
+      if (info.exists) return document.pdf_path;
+    }
+    const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality });
+    await DatabaseService.updateDocument(document.id, { pdf_path: path });
+    setDocument((prev) => (prev ? { ...prev, pdf_path: path } : prev));
+    return path;
+  };
+
+  const withBusy = async (label: string, fn: () => Promise<void>) => {
+    try {
+      setBusyText(label);
+      await fn();
     } catch (e: any) {
-      setIsExporting(false);
-      Alert.alert('Share Error', e.message || 'Failed to share file');
+      Alert.alert(t('error'), e?.message || 'Something went wrong');
+    } finally {
+      setBusyText(null);
     }
   };
 
-  const handleGeneratePdfWithOptions = async () => {
-    if (!document) return;
-    if (pages.length === 0) {
-      Alert.alert('Error', 'No pages found in this document');
-      return;
-    }
+  const sharePdf = () =>
+    withBusy(t('generating'), async () => {
+      if (!document) return;
+      const path = await ensurePdf();
+      setBusyText(null);
+      await PdfService.shareFile(path, 'application/pdf', `${safeFileName(document.title)}.pdf`);
+    });
 
-    try {
-      setIsExporting(true);
-      const newPdfPath = await PdfService.generatePdf(document.id, pages, {
-        title: document.title,
-        pageSize,
-        quality,
-      });
-      await DatabaseService.updateDocument(document.id, { pdf_path: newPdfPath });
-      setDocument((prev) => (prev ? { ...prev, pdf_path: newPdfPath } : null));
-      setIsExporting(false);
+  /** Renders pages with their filter and rotation baked in, as JPG files. */
+  const renderPages = async (list: Page[]): Promise<string[]> => {
+    const out: string[] = [];
+    for (const p of list) {
+      out.push(await engine.renderFiltered(p.processed_path || p.original_path, getFilterRecipe(p.filter, p.intensity ?? 0.6), p.rotation));
+    }
+    return out;
+  };
+
+  const shareImage = (index: number) =>
+    withBusy(t('processing'), async () => {
+      const [uri] = await renderPages([pages[index]]);
+      setBusyText(null);
+      await PdfService.shareFile(uri, 'image/jpeg', `${safeFileName(document?.title || 'page')}_${index + 1}.jpg`);
+    });
+
+  const saveToGallery = (list: Page[]) =>
+    withBusy(t('processing'), async () => {
+      const files = await renderPages(list);
+      const n = await GalleryService.saveImages(files);
+      setBusyText(null);
+      Alert.alert(t('success'), t('savedToGallery').replace('{n}', String(n)));
+    });
+
+  const generatePdfWithOptions = () =>
+    withBusy(t('generating'), async () => {
+      if (!document || pages.length === 0) return;
+      const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality });
+      await DatabaseService.updateDocument(document.id, { pdf_path: path });
+      setDocument((prev) => (prev ? { ...prev, pdf_path: path } : prev));
       setPdfModalVisible(false);
-
-      const fileName = `${document.title.replace(/[^a-zA-Z0-9_\-\u0980-\u09FF]/g, '_')}.pdf`;
-
-      Alert.alert(
-        t('pdfExported'),
-        t('choosePdfAction'),
-        [
-          {
-            text: t('saveToDownloads'),
-            onPress: async () => {
-              const saved = await PdfService.saveToDownloads(newPdfPath, fileName);
-              if (saved) {
-                Alert.alert(t('success'), t('pdfSavedToDownloads'));
-              } else {
-                await PdfService.shareFile(newPdfPath, 'application/pdf', fileName);
-              }
-            },
+      setBusyText(null);
+      const fileName = `${safeFileName(document.title)}.pdf`;
+      Alert.alert(t('pdfExported'), t('choosePdfAction'), [
+        {
+          text: t('saveToDownloads'),
+          onPress: async () => {
+            const saved = await PdfService.saveToDownloads(path, fileName);
+            if (saved) Alert.alert(t('success'), t('pdfSavedToDownloads'));
+            else await PdfService.shareFile(path, 'application/pdf', fileName);
           },
-          {
-            text: t('share'),
-            onPress: async () => {
-              await PdfService.shareFile(newPdfPath, 'application/pdf', fileName);
-            },
-          },
-          {
-            text: t('cancel'),
-            style: 'cancel',
-          },
-        ]
-      );
-    } catch (e: any) {
-      setIsExporting(false);
-      Alert.alert('Export Error', e.message || 'Failed to export PDF');
-    }
-  };
+        },
+        { text: t('share'), onPress: () => PdfService.shareFile(path, 'application/pdf', fileName) },
+        { text: t('cancel'), style: 'cancel' },
+      ]);
+    });
 
-  // Drag-to-reorder pages; saves the new order, marks the old PDF as stale and
-  // refreshes the cover thumbnail when the first page changes.
-  const handleReorderPages = async (from: number, to: number) => {
+  const addPages = (source: 'camera' | 'gallery') => {
     if (!document) return;
-    const previous = pages;
-    const reordered = moveItem(pages, from, to).map((p, i) => ({ ...p, position: i }));
-    setPages(reordered);
-    try {
-      for (const p of reordered) {
-        const old = previous.find((o) => o.id === p.id);
-        if (old && old.position !== p.position) {
-          await DatabaseService.updatePage(p.id, { position: p.position });
-        }
+    // Pages go through the normal crop + edit flow, then get appended to this document
+    const go = (res: { pages: { uri: string; cropped?: boolean }[] } | null) => {
+      if (res && res.pages.length > 0) {
+        setPendingScanImages(res.pages);
+        router.push({ pathname: '/scan-review', params: { appendTo: document.id } });
       }
-      const updates: Partial<Document> = { pdf_path: null, updated_at: Date.now() };
-      if (reordered[0].id !== previous[0]?.id) {
-        const thumb = await ImageService.generateThumbnail(reordered[0].processed_path || reordered[0].original_path);
-        // New file name so cached images of the old cover are not reused
-        const thumbPath = `${StorageService.getDocumentDir(document.id)}thumb_${Date.now()}.jpg`;
-        await FileSystem.copyAsync({ from: thumb, to: thumbPath });
-        if (document.thumbnail_path && document.thumbnail_path !== thumbPath) {
-          await FileSystem.deleteAsync(document.thumbnail_path, { idempotent: true });
-        }
-        updates.thumbnail_path = thumbPath;
-      }
-      await DatabaseService.updateDocument(document.id, updates);
-      setDocument((prev) => (prev ? { ...prev, ...updates } : null));
-      loadAll().catch(() => undefined);
-    } catch (e: any) {
-      console.warn('Reorder failed:', e);
-      setPages(previous);
-      Alert.alert(t('error'), e.message || 'Failed to reorder pages');
-    }
+    };
+    const pick =
+      source === 'camera'
+        ? scannerService.scanWithCamera({ maxNumDocuments: 50 })
+        : scannerService.importFromGallery({ allowsMultiple: true });
+    pick.then(go, (e: any) => Alert.alert(t('error'), e?.message || 'Something went wrong'));
   };
 
-  const handleSaveRename = async () => {
-    if (!document) return;
-    if (titleInput.trim().length === 0) {
-      Alert.alert('Warning', 'Title cannot be empty');
-      return;
-    }
-    await updateTitle(document.id, titleInput.trim());
-    setDocument((prev) => (prev ? { ...prev, title: titleInput.trim() } : null));
-    setRenameModalVisible(false);
-  };
-
-  const handleSelectFolder = async (folderId: string | null) => {
-    if (!document) return;
-    await moveToFolder(document.id, folderId);
-    setDocument((prev) => (prev ? { ...prev, folder_id: folderId } : null));
-    setMoveModalVisible(false);
-  };
-
-  const handleDelete = () => {
+  const deleteDocument = () => {
     if (!document) return;
     Alert.alert(t('deleteConfirmTitle'), t('deleteConfirmMsg'), [
       { text: t('cancel'), style: 'cancel' },
@@ -237,6 +211,82 @@ export default function DocumentDetailScreen() {
     ]);
   };
 
+  const saveRename = async () => {
+    if (!document || !titleInput.trim()) return;
+    await updateTitle(document.id, titleInput.trim());
+    setDocument((prev) => (prev ? { ...prev, title: titleInput.trim() } : prev));
+    setRenameVisible(false);
+  };
+
+  const refreshCover = async (doc: Document, first: Page) => {
+    const thumb = await ImageService.generateThumbnail(first.processed_path || first.original_path, first.rotation);
+    const thumbPath = await StorageService.saveThumbnail(doc.id, thumb);
+    await DatabaseService.updateDocument(doc.id, { thumbnail_path: thumbPath });
+    setDocument((prev) => (prev ? { ...prev, thumbnail_path: thumbPath } : prev));
+  };
+
+  /** Saves new positions; marks the PDF stale; refreshes the cover when the first page changes. */
+  const reorderPages = async (from: number, to: number) => {
+    if (!document) return;
+    const previous = pages;
+    const reordered = moveItem(pages, from, to).map((p, i) => ({ ...p, position: i }));
+    setPages(reordered);
+    try {
+      for (const p of reordered) {
+        const old = previous.find((o) => o.id === p.id);
+        if (old && old.position !== p.position) await DatabaseService.updatePage(p.id, { position: p.position });
+      }
+      await DatabaseService.updateDocument(document.id, { pdf_path: null, updated_at: Date.now() });
+      setDocument((prev) => (prev ? { ...prev, pdf_path: null } : prev));
+      if (reordered[0].id !== previous[0]?.id) await refreshCover(document, reordered[0]);
+      loadAll().catch(() => undefined);
+    } catch (e: any) {
+      setPages(previous);
+      Alert.alert(t('error'), e?.message || 'Failed to reorder pages');
+    }
+  };
+
+  const rotatePage = async (index: number) => {
+    if (!document) return;
+    const p = pages[index];
+    const rotation = ((p.rotation + 90) % 360) as PageRotation;
+    await DatabaseService.updatePage(p.id, { rotation });
+    await DatabaseService.updateDocument(document.id, { pdf_path: null, updated_at: Date.now() });
+    const updated = pages.map((x, i) => (i === index ? { ...x, rotation } : x));
+    setPages(updated);
+    setDocument((prev) => (prev ? { ...prev, pdf_path: null } : prev));
+    if (index === 0) await refreshCover(document, updated[0]);
+    loadAll().catch(() => undefined);
+  };
+
+  const deletePage = (index: number) => {
+    if (!document) return;
+    if (pages.length <= 1) {
+      Alert.alert(t('warning'), t('lastPageWarning'));
+      return;
+    }
+    Alert.alert(t('delete'), t('deletePageConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: async () => {
+          const remaining = pages.filter((_, i) => i !== index).map((p, i) => ({ ...p, position: i }));
+          await DatabaseService.deletePage(pages[index].id);
+          for (const p of remaining) await DatabaseService.updatePage(p.id, { position: p.position });
+          await DatabaseService.updateDocument(document.id, { page_count: remaining.length, pdf_path: null, updated_at: Date.now() });
+          setPages(remaining);
+          setDocument((prev) => (prev ? { ...prev, page_count: remaining.length, pdf_path: null } : prev));
+          if (index === 0) await refreshCover(document, remaining[0]);
+          setViewerIndex((v) => (v === null ? null : Math.min(v, remaining.length - 1)));
+          loadAll().catch(() => undefined);
+        },
+      },
+    ]);
+  };
+
+  /* ---------- render ---------- */
+
   if (loading || !document) {
     return (
       <View style={[styles.center, { backgroundColor: colors.background }]}>
@@ -246,16 +296,25 @@ export default function DocumentDetailScreen() {
   }
 
   const moreItems: ActionSheetItem[] = [
-    { key: 'rename', label: t('rename'), icon: 'create-outline', onPress: () => setRenameModalVisible(true) },
-    { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveModalVisible(true) },
+    { key: 'rename', label: t('rename'), icon: 'create-outline', onPress: () => setRenameVisible(true) },
+    { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveVisible(true) },
+    { key: 'gallery', label: t('saveToGallery'), icon: 'images-outline', onPress: () => saveToGallery(pages) },
     { key: 'pdf', label: t('exportPdf'), icon: 'document-text-outline', onPress: () => setPdfModalVisible(true) },
-    { key: 'delete', label: t('delete'), icon: 'trash-outline', destructive: true, onPress: handleDelete },
+    { key: 'delete', label: t('delete'), icon: 'trash-outline', destructive: true, onPress: deleteDocument },
+  ];
+  const shareItems: ActionSheetItem[] = [
+    { key: 'pdf', label: t('sharePdf'), icon: 'document-text-outline', onPress: sharePdf },
+    ...(pages.length === 1
+      ? [{ key: 'jpg', label: t('shareJpg'), icon: 'image-outline' as const, onPress: () => shareImage(0) }]
+      : []),
+    { key: 'gallery', label: t('saveToGallery'), icon: 'download-outline', onPress: () => saveToGallery(pages) },
+  ];
+  const addItems: ActionSheetItem[] = [
+    { key: 'scan', label: t('scanDocument'), icon: 'camera-outline', onPress: () => addPages('camera') },
+    { key: 'import', label: t('importImages'), icon: 'images-outline', onPress: () => addPages('gallery') },
   ];
 
   const viewerPage = viewerIndex !== null ? pages[viewerIndex] : null;
-  const createdAt = new Date(document.created_at);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const dateLabel = `${pad(createdAt.getDate())}/${pad(createdAt.getMonth() + 1)}/${createdAt.getFullYear()}`;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
@@ -264,103 +323,114 @@ export default function DocumentDetailScreen() {
         <TouchableOpacity style={styles.headerBtn} onPress={() => router.back()} accessibilityLabel={t('home')}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.titleArea} onPress={() => setRenameModalVisible(true)}>
-          <View style={styles.titleRow}>
-            <Text style={[styles.docTitle, { color: colors.text }]} numberOfLines={1}>
-              {document.title}
-            </Text>
-            <Ionicons name="pencil" size={14} color={colors.textSecondary} />
-          </View>
-          <Text style={[styles.docSub, { color: colors.textSecondary }]}>
-            {pages.length} {t('pagesLabel')} · {dateLabel}
+        <TouchableOpacity style={styles.titleArea} onPress={() => setRenameVisible(true)}>
+          <Text style={[styles.docTitle, { color: colors.text, borderBottomColor: colors.borderStrong }]} numberOfLines={1}>
+            {document.title}
           </Text>
+          <Ionicons name="pencil" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.headerBtn} onPress={() => setMoreSheetVisible(true)} accessibilityLabel="More">
+        <TouchableOpacity
+          style={styles.headerBtn}
+          onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
+          accessibilityLabel="Toggle view"
+        >
+          <Ionicons name={viewMode === 'list' ? 'grid-outline' : 'square-outline'} size={22} color={colors.text} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.headerBtn} onPress={() => setSheet('more')} accessibilityLabel={t('more')}>
           <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
 
-      {/* Page grid */}
+      {/* Pages */}
       <ScrollView contentContainerStyle={styles.gridContent} scrollEnabled={!gridDragging}>
-        <Text style={[styles.dragHint, { color: colors.textSecondary }]}>{t('dragToReorder')}</Text>
         <DraggableGrid
+          key={viewMode}
           data={pages}
           keyExtractor={(p) => p.id}
-          columns={2}
+          columns={columns}
           cellWidth={cellWidth}
-          cellHeight={cellWidth * (4 / 3)}
+          cellHeight={cellHeight}
           gap={GRID_GAP}
-          onReorder={handleReorderPages}
+          onReorder={reorderPages}
           onPressItem={setViewerIndex}
           onDragActiveChange={setGridDragging}
           renderItem={(item, index) => (
-          <View style={[styles.pageCell, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.pageCellInner} pointerEvents="none">
-              <DocumentPageView
-                uri={item.processed_path || item.original_path}
-                filter={item.filter}
-                intensity={item.intensity ?? 0.6}
-                rotation={item.rotation}
-                backgroundColor={colors.surface}
-              />
+            <View style={[styles.pageCell, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.flex1} pointerEvents="none">
+                <DocumentPageView
+                  uri={item.processed_path || item.original_path}
+                  filter={item.filter}
+                  intensity={item.intensity ?? 0.6}
+                  rotation={item.rotation}
+                  backgroundColor={colors.surface}
+                />
+              </View>
+              <View style={styles.pageBadge}>
+                <Text style={styles.pageBadgeText}>
+                  {index + 1}/{pages.length}
+                </Text>
+              </View>
             </View>
-            <View style={[styles.pageNum, { backgroundColor: colors.primary }]}>
-              <Text style={styles.pageNumText}>{index + 1}</Text>
-            </View>
-          </View>
           )}
         />
+        <TouchableOpacity
+          style={[styles.addCard, { borderColor: colors.borderStrong, marginTop: GRID_GAP }]}
+          onPress={() => setSheet('add')}
+        >
+          <Ionicons name="camera-outline" size={26} color={colors.textMuted} />
+          <Text style={[styles.addCardText, { color: colors.textMuted }]}>{t('add')}</Text>
+        </TouchableOpacity>
+        <Text style={[styles.dragHint, { color: colors.textMuted }]}>{t('dragToReorder')}</Text>
       </ScrollView>
 
-      {/* Bottom toolbar */}
+      {/* Bottom bar */}
       <View
         style={[
           styles.bottomBar,
           { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 8) },
         ]}
       >
-        <BarButton icon="share-social-outline" label={t('share')} color={colors.text} onPress={handleShare} />
+        <BarButton icon="camera-outline" label={t('add')} color={colors.text} onPress={() => setSheet('add')} />
+        <BarButton icon="create-outline" label={t('edit')} color={colors.text} onPress={() => setViewerIndex(0)} />
+        <BarButton icon="share-social-outline" label={t('share')} color={colors.text} onPress={() => setSheet('share')} />
         <BarButton icon="document-text-outline" label="PDF" color={colors.text} onPress={() => setPdfModalVisible(true)} />
-        <BarButton icon="create-outline" label={t('rename')} color={colors.text} onPress={() => setRenameModalVisible(true)} />
-        <BarButton icon="folder-outline" label={t('moveShort')} color={colors.text} onPress={() => setMoveModalVisible(true)} />
-        <BarButton icon="trash-outline" label={t('delete')} color={colors.danger} onPress={handleDelete} />
+        <BarButton
+          icon="pencil-outline"
+          label={t('sign')}
+          color={colors.text}
+          onPress={() => (pages.length === 1 ? setAnnotate({ mode: 'sign', page: pages[0] }) : setViewerIndex(0))}
+        />
       </View>
 
-      {isExporting && (
-        <View style={styles.exportOverlay}>
+      {busyText && (
+        <View style={styles.busyOverlay}>
           <ActivityIndicator size="large" color="#FFFFFF" />
-          <Text style={styles.exportText}>{t('generating')}</Text>
+          <Text style={styles.busyText}>{busyText}</Text>
         </View>
       )}
 
-      <ActionSheet
-        visible={moreSheetVisible}
-        title={document.title}
-        items={moreItems}
-        onClose={() => setMoreSheetVisible(false)}
-      />
+      <ActionSheet visible={sheet === 'more'} title={document.title} items={moreItems} onClose={() => setSheet(null)} />
+      <ActionSheet visible={sheet === 'share'} title={t('share')} items={shareItems} onClose={() => setSheet(null)} />
+      <ActionSheet visible={sheet === 'add'} title={t('addPage')} items={addItems} onClose={() => setSheet(null)} />
 
-      {/* Full-screen page viewer */}
-      <Modal
-        visible={viewerPage !== null}
-        animationType="fade"
-        onRequestClose={() => setViewerIndex(null)}
-        statusBarTranslucent
-      >
+      {/* Page viewer with per-page tools */}
+      <Modal visible={viewerPage !== null} animationType="fade" onRequestClose={() => setViewerIndex(null)} statusBarTranslucent>
         <View style={[styles.viewer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.viewerHeader}>
             <TouchableOpacity style={styles.headerBtn} onPress={() => setViewerIndex(null)}>
-              <Ionicons name="close" size={26} color="#FFFFFF" />
+              <Ionicons name="arrow-back" size={26} color="#FFFFFF" />
             </TouchableOpacity>
             <Text style={styles.viewerTitle}>
-              {(viewerIndex ?? 0) + 1} / {pages.length}
+              {(viewerIndex ?? 0) + 1}/{pages.length}
             </Text>
-            <View style={styles.headerBtn} />
+            <TouchableOpacity style={styles.headerBtn} onPress={() => viewerIndex !== null && shareImage(viewerIndex)}>
+              <Ionicons name="share-social-outline" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
           </View>
           <View style={styles.viewerBody}>
             {viewerPage && (
               <DocumentPageView
-                key={viewerPage.id}
+                key={`${viewerPage.id}:${viewerPage.processed_path}`}
                 uri={viewerPage.processed_path || viewerPage.original_path}
                 filter={viewerPage.filter}
                 intensity={viewerPage.intensity ?? 0.6}
@@ -368,31 +438,74 @@ export default function DocumentDetailScreen() {
                 backgroundColor="#000000"
               />
             )}
+            {(viewerIndex ?? 0) > 0 && (
+              <TouchableOpacity style={[styles.navBtn, { left: 8 }]} onPress={() => setViewerIndex((i) => Math.max(0, (i ?? 0) - 1))}>
+                <Ionicons name="chevron-back" size={28} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+            {(viewerIndex ?? 0) < pages.length - 1 && (
+              <TouchableOpacity
+                style={[styles.navBtn, { right: 8 }]}
+                onPress={() => setViewerIndex((i) => Math.min(pages.length - 1, (i ?? 0) + 1))}
+              >
+                <Ionicons name="chevron-forward" size={28} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
           </View>
-          <View style={styles.viewerNav}>
-            <TouchableOpacity
-              style={styles.viewerNavBtn}
-              disabled={(viewerIndex ?? 0) <= 0}
-              onPress={() => setViewerIndex((i) => Math.max(0, (i ?? 0) - 1))}
-            >
-              <Ionicons name="chevron-back" size={28} color={(viewerIndex ?? 0) <= 0 ? '#555555' : '#FFFFFF'} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.viewerNavBtn}
-              disabled={(viewerIndex ?? 0) >= pages.length - 1}
-              onPress={() => setViewerIndex((i) => Math.min(pages.length - 1, (i ?? 0) + 1))}
-            >
-              <Ionicons
-                name="chevron-forward"
-                size={28}
-                color={(viewerIndex ?? 0) >= pages.length - 1 ? '#555555' : '#FFFFFF'}
+          {viewerPage && viewerIndex !== null && (
+            <View style={styles.viewerTools}>
+              <ViewerTool icon="refresh" label={t('rotate')} onPress={() => rotatePage(viewerIndex)} />
+              <ViewerTool icon="brush-outline" label={t('markup')} onPress={() => setAnnotate({ mode: 'markup', page: viewerPage })} />
+              <ViewerTool icon="create-outline" label={t('sign')} onPress={() => setAnnotate({ mode: 'sign', page: viewerPage })} />
+              <ViewerTool icon="water-outline" label={t('watermark')} onPress={() => setAnnotate({ mode: 'watermark', page: viewerPage })} />
+              <ViewerTool
+                icon="text"
+                label={t('text')}
+                onPress={() => router.push({ pathname: '/extract-text', params: { uri: viewerPage.processed_path || viewerPage.original_path } })}
               />
-            </TouchableOpacity>
-          </View>
+              <ViewerTool icon="trash-outline" label={t('delete')} danger onPress={() => deletePage(viewerIndex)} />
+            </View>
+          )}
         </View>
+
+        {annotate && (
+          <AnnotateModal
+            visible
+            mode={annotate.mode}
+            imageUri={annotate.page.processed_path || annotate.page.original_path}
+            onClose={() => setAnnotate(null)}
+            onApply={async (uri) => {
+              const target = annotate.page;
+              await withBusy(t('saving'), async () => {
+                const updated = await replacePageImage(target, uri);
+                setPages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+                setDocument((prev) => (prev ? { ...prev, pdf_path: null } : prev));
+              });
+            }}
+          />
+        )}
       </Modal>
 
-      {/* PDF export settings (FR-20, FR-21, FR-22) */}
+      {/* Sign straight from the bottom bar (single-page documents) */}
+      {annotate && viewerPage === null && (
+        <AnnotateModal
+          visible
+          mode={annotate.mode}
+          imageUri={annotate.page.processed_path || annotate.page.original_path}
+          onClose={() => setAnnotate(null)}
+          onApply={async (uri) => {
+            const target = annotate.page;
+            await withBusy(t('saving'), async () => {
+              const updated = await replacePageImage(target, uri);
+              setPages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+              setDocument((prev) => (prev ? { ...prev, pdf_path: null } : prev));
+              if (updated.position === 0) reload();
+            });
+          }}
+        />
+      )}
+
+      {/* PDF export settings */}
       <Modal visible={pdfModalVisible} transparent animationType="slide" onRequestClose={() => setPdfModalVisible(false)}>
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface, paddingBottom: Math.max(insets.bottom, 20) + 12 }]}>
@@ -402,7 +515,6 @@ export default function DocumentDetailScreen() {
                 <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
-
             <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('pageSize')}</Text>
             <View style={styles.pillRow}>
               {(['A4', 'Letter', 'Fit'] as PdfPageSize[]).map((sz) => (
@@ -411,13 +523,10 @@ export default function DocumentDetailScreen() {
                   style={[styles.pill, { backgroundColor: pageSize === sz ? colors.primary : colors.surfaceVariant }]}
                   onPress={() => setPageSize(sz)}
                 >
-                  <Text style={[styles.pillText, { color: pageSize === sz ? colors.primaryContrast : colors.text }]}>
-                    {sz}
-                  </Text>
+                  <Text style={[styles.pillText, { color: pageSize === sz ? colors.primaryContrast : colors.text }]}>{sz}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-
             <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('quality')}</Text>
             <View style={styles.pillRow}>
               {(['low', 'medium', 'high'] as PdfQuality[]).map((q) => (
@@ -432,24 +541,17 @@ export default function DocumentDetailScreen() {
                 </TouchableOpacity>
               ))}
             </View>
-
             <View style={[styles.watermarkBadge, { backgroundColor: colors.successLight }]}>
               <Ionicons name="shield-checkmark" size={16} color={colors.success} />
               <Text style={[styles.watermarkText, { color: colors.success }]}>{t('noWatermark')}</Text>
             </View>
-
-            <ActionButton
-              title={isExporting ? t('generating') : t('exportPdf')}
-              loading={isExporting}
-              onPress={handleGeneratePdfWithOptions}
-              style={{ marginTop: 16 }}
-            />
+            <ActionButton title={t('exportPdf')} loading={busyText !== null} onPress={generatePdfWithOptions} style={{ marginTop: 16 }} />
           </View>
         </View>
       </Modal>
 
       {/* Move to folder */}
-      <Modal visible={moveModalVisible} transparent animationType="fade" onRequestClose={() => setMoveModalVisible(false)}>
+      <Modal visible={moveVisible} transparent animationType="fade" onRequestClose={() => setMoveVisible(false)}>
         <View style={[styles.modalCenterOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.centerCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('moveToFolder')}</Text>
@@ -460,7 +562,11 @@ export default function DocumentDetailScreen() {
                   <TouchableOpacity
                     key={f.id ?? 'root'}
                     style={[styles.folderOptionItem, selected && { backgroundColor: colors.primaryLight }]}
-                    onPress={() => handleSelectFolder(f.id)}
+                    onPress={async () => {
+                      await moveToFolder(document.id, f.id);
+                      setDocument((prev) => (prev ? { ...prev, folder_id: f.id } : prev));
+                      setMoveVisible(false);
+                    }}
                   >
                     <Ionicons name={f.id ? 'folder' : 'folder-outline'} size={20} color={colors.primary} />
                     <Text style={[styles.folderOptionText, { color: colors.text }]}>{f.name}</Text>
@@ -469,33 +575,25 @@ export default function DocumentDetailScreen() {
                 );
               })}
             </ScrollView>
-            <ActionButton title={t('cancel')} variant="outline" onPress={() => setMoveModalVisible(false)} />
+            <ActionButton title={t('cancel')} variant="outline" onPress={() => setMoveVisible(false)} />
           </View>
         </View>
       </Modal>
 
       {/* Rename */}
-      <Modal visible={renameModalVisible} transparent animationType="fade" onRequestClose={() => setRenameModalVisible(false)}>
+      <Modal visible={renameVisible} transparent animationType="fade" onRequestClose={() => setRenameVisible(false)}>
         <View style={[styles.modalCenterOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.centerCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('rename')}</Text>
             <TextInput
-              style={[
-                styles.modalInput,
-                { color: colors.text, borderColor: colors.borderStrong, backgroundColor: colors.surfaceVariant },
-              ]}
+              style={[styles.modalInput, { color: colors.text, borderColor: colors.borderStrong, backgroundColor: colors.surfaceVariant }]}
               value={titleInput}
               onChangeText={setTitleInput}
               autoFocus
             />
             <View style={styles.modalActions}>
-              <ActionButton
-                title={t('cancel')}
-                variant="outline"
-                onPress={() => setRenameModalVisible(false)}
-                style={styles.flex1}
-              />
-              <ActionButton title={t('save')} onPress={handleSaveRename} style={styles.flex1} />
+              <ActionButton title={t('cancel')} variant="outline" onPress={() => setRenameVisible(false)} style={styles.flex1} />
+              <ActionButton title={t('save')} onPress={saveRename} style={styles.flex1} />
             </View>
           </View>
         </View>
@@ -504,252 +602,111 @@ export default function DocumentDetailScreen() {
   );
 }
 
-const BarButton: React.FC<{
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  color: string;
-  onPress: () => void;
-}> = ({ icon, label, color, onPress }) => (
+const BarButton: React.FC<{ icon: keyof typeof Ionicons.glyphMap; label: string; color: string; onPress: () => void }> = ({
+  icon,
+  label,
+  color,
+  onPress,
+}) => (
   <TouchableOpacity style={styles.barBtn} onPress={onPress}>
-    <Ionicons name={icon} size={22} color={color} />
+    <Ionicons name={icon} size={24} color={color} />
     <Text style={[styles.barBtnText, { color }]} numberOfLines={1}>
       {label}
     </Text>
   </TouchableOpacity>
 );
 
-const GRID_PADDING = 12;
-const GRID_GAP = 12;
+const ViewerTool: React.FC<{ icon: keyof typeof Ionicons.glyphMap; label: string; danger?: boolean; onPress: () => void }> = ({
+  icon,
+  label,
+  danger,
+  onPress,
+}) => (
+  <TouchableOpacity style={styles.viewerTool} onPress={onPress}>
+    <Ionicons name={icon} size={23} color={danger ? '#FF6B6B' : '#FFFFFF'} />
+    <Text style={[styles.viewerToolText, danger && { color: '#FF6B6B' }]} numberOfLines={1}>
+      {label}
+    </Text>
+  </TouchableOpacity>
+);
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  flex1: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  headerBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  titleArea: {
-    flex: 1,
-    paddingHorizontal: 4,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  docTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-  docSub: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  gridContent: {
-    padding: GRID_PADDING,
-    paddingBottom: 100,
-  },
-  dragHint: {
-    fontSize: 12,
-    marginBottom: 8,
-  },
-  pageCell: {
-    flex: 1,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
-  },
-  pageCellInner: {
-    flex: 1,
-  },
-  pageNum: {
+  container: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  flex1: { flex: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  titleArea: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4 },
+  docTitle: { fontSize: 18, fontWeight: '600', flexShrink: 1, borderBottomWidth: 1, borderStyle: 'dashed', paddingBottom: 2 },
+  gridContent: { padding: GRID_PADDING, paddingBottom: 110 },
+  pageCell: { flex: 1, borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  pageBadge: {
     position: 'absolute',
-    left: 8,
-    bottom: 8,
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    paddingHorizontal: 6,
+    top: 0,
+    left: 0,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderBottomRightRadius: 6,
+  },
+  pageBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  addCard: {
+    height: 84,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 10,
   },
-  pageNumText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  addCardText: { fontSize: 18 },
+  dragHint: { fontSize: 12, textAlign: 'center', marginTop: 12 },
   bottomBar: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     flexDirection: 'row',
-    justifyContent: 'space-around',
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 8,
   },
-  barBtn: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-  },
-  barBtnText: {
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  exportOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  exportText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-  },
-  viewer: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  viewerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 4,
-  },
-  viewerTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  viewerBody: {
-    flex: 1,
-  },
-  viewerNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-  },
-  viewerNavBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+  barBtn: { flex: 1, alignItems: 'center', gap: 3 },
+  barBtnText: { fontSize: 12, fontWeight: '500' },
+  busyOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  busyText: { color: '#FFFFFF', fontSize: 14 },
+  viewer: { flex: 1, backgroundColor: '#000000' },
+  viewerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4 },
+  viewerTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  viewerBody: { flex: 1 },
+  navBtn: {
+    position: 'absolute',
+    top: '45%',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  modalCenterOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-  },
-  centerCard: {
-    width: '100%',
-    maxWidth: 340,
-    borderRadius: 16,
-    padding: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  sectionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  pillRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  pill: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modalInput: {
-    height: 48,
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    fontSize: 15,
-    marginTop: 12,
-    marginBottom: 16,
-  },
-  watermarkBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    padding: 10,
-    borderRadius: 8,
-    marginTop: 14,
-  },
-  watermarkText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  folderList: {
-    maxHeight: 240,
-    marginVertical: 12,
-  },
-  folderOptionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-  },
-  folderOptionText: {
-    fontSize: 15,
-    flex: 1,
-  },
+  viewerTools: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: '#181B20' },
+  viewerTool: { alignItems: 'center', gap: 4, minWidth: 52 },
+  viewerToolText: { color: '#FFFFFF', fontSize: 11 },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  modalCenterOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  modalCard: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  centerCard: { width: '100%', maxWidth: 340, borderRadius: 16, padding: 20 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700' },
+  sectionLabel: { fontSize: 14, fontWeight: '600', marginTop: 12, marginBottom: 8 },
+  pillRow: { flexDirection: 'row', gap: 8 },
+  pill: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  pillText: { fontSize: 13, fontWeight: '600' },
+  modalInput: { height: 48, borderRadius: 10, borderWidth: 1, paddingHorizontal: 12, fontSize: 15, marginTop: 12, marginBottom: 16 },
+  watermarkBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 10, borderRadius: 8, marginTop: 14 },
+  watermarkText: { fontSize: 13, fontWeight: '600' },
+  modalActions: { flexDirection: 'row', gap: 10 },
+  folderList: { maxHeight: 240, marginVertical: 12 },
+  folderOptionItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8 },
+  folderOptionText: { fontSize: 15, flex: 1 },
 });

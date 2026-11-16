@@ -20,6 +20,9 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { scannerService } from '@/services/scanner/ScannerService';
 import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { CropModal } from '@/ui/components/CropModal';
+import { AnnotateModal, AnnotateMode } from '@/ui/components/AnnotateModal';
+import { ActionSheet } from '@/ui/components/ActionSheet';
+import { FILTER_ORDER, getFilterRecipe } from '@/services/image/FilterUtils';
 import { DraggableGrid, moveItem } from '@/ui/components/DraggableGrid';
 import { ScanEngineProvider, useScanEngine } from '@/ui/components/ScanEngine';
 import { Quad, isFullQuad } from '@/services/scanner/quad';
@@ -68,10 +71,11 @@ export default function ScanReviewScreen() {
 }
 
 function ScanReviewContent() {
-  const params = useLocalSearchParams<{ rawImages?: string }>();
+  // appendTo: opened from a document's "Add" card, so Save appends pages instead of creating a document
+  const params = useLocalSearchParams<{ rawImages?: string; appendTo?: string }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  const { createDocument, activeFolderId, pendingScanImages } = useDocumentStore();
+  const { createDocument, addPages, activeFolderId, pendingScanImages } = useDocumentStore();
   const { default_filter, t } = useSettingsStore();
 
   const [pages, setPages] = useState<EditablePage[]>(() => {
@@ -94,6 +98,9 @@ function ScanReviewContent() {
   const [cropModalVisible, setCropModalVisible] = useState(false);
   const [applyToAll, setApplyToAll] = useState(false);
   const [stripDragging, setStripDragging] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [annotateMode, setAnnotateMode] = useState<AnnotateMode | null>(null);
+  const [moreVisible, setMoreVisible] = useState(false);
   // New pages wait here for the user to confirm their crop, one after another (like the reference flow)
   const [reviewQueue, setReviewQueue] = useState<string[]>([]);
   const [reviewedCount, setReviewedCount] = useState(0);
@@ -276,6 +283,12 @@ function ScanReviewContent() {
 
     try {
       setIsSaving(true);
+      if (params.appendTo) {
+        await addPages(params.appendTo, pages);
+        setIsSaving(false);
+        router.back();
+        return;
+      }
       const newDoc = await createDocument(
         docTitle.trim() || null,
         pages,
@@ -298,13 +311,15 @@ function ScanReviewContent() {
     ]);
   };
 
-  const filterOptions: { label: string; value: PageFilter; icon: keyof typeof Ionicons.glyphMap }[] = [
-    { label: t('filterOriginal'), value: 'original', icon: 'image-outline' },
-    { label: t('filterMagic'), value: 'magic', icon: 'sparkles' },
-    { label: t('filterEnhanced'), value: 'enhanced', icon: 'color-wand-outline' },
-    { label: t('filterBw'), value: 'bw', icon: 'contrast-outline' },
-    { label: t('filterGrayscale'), value: 'grayscale', icon: 'radio-button-off-outline' },
-  ];
+  const filterLabels: Record<PageFilter, string> = {
+    original: t('filterOriginal'),
+    lighten: t('filterLighten'),
+    magic: t('filterMagic'),
+    enhanced: t('filterEnhanced'),
+    noshadow: t('filterNoShadow'),
+    bw: t('filterBw'),
+    grayscale: t('filterGrayscale'),
+  };
 
   if (pages.length === 0) {
     return (
@@ -323,7 +338,7 @@ function ScanReviewContent() {
       {/* Top bar: close, editable title, save */}
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.topBtn} onPress={handleClose} accessibilityLabel={t('cancel')}>
-          <Ionicons name="close" size={26} color="#FFFFFF" />
+          <Ionicons name="arrow-back" size={26} color="#FFFFFF" />
         </TouchableOpacity>
         <TextInput
           style={styles.titleInput}
@@ -333,18 +348,6 @@ function ScanReviewContent() {
           placeholderTextColor="#8A8F98"
           numberOfLines={1}
         />
-        <TouchableOpacity
-          style={[styles.saveBtn, { backgroundColor: pendingCount > 0 ? '#3A3F47' : colors.primary }]}
-          onPress={handleSave}
-          disabled={pendingCount > 0 || isSaving}
-          accessibilityLabel={t('save')}
-        >
-          {isSaving || pendingCount > 0 ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <Ionicons name="checkmark" size={24} color="#FFFFFF" />
-          )}
-        </TouchableOpacity>
       </View>
 
       {/* Page preview */}
@@ -352,7 +355,7 @@ function ScanReviewContent() {
         {currentPage && (
           <DocumentPageView
             uri={currentPage.originalUri}
-            filter={currentPage.filter}
+            filter={comparing ? 'original' : currentPage.filter}
             intensity={currentPage.intensity ?? 0.6}
             rotation={currentPage.rotation}
             backgroundColor={EDITOR.background}
@@ -369,6 +372,17 @@ function ScanReviewContent() {
             {currentPageIndex + 1}/{pages.length}
           </Text>
         </View>
+        {currentPage && currentPage.filter !== 'original' && (
+          <TouchableOpacity
+            style={[styles.compareBtn, comparing && { backgroundColor: colors.primary }]}
+            onPressIn={() => setComparing(true)}
+            onPressOut={() => setComparing(false)}
+            activeOpacity={1}
+          >
+            <Ionicons name="git-compare-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.compareText}>{t('compare')}</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Pages strip */}
@@ -412,19 +426,23 @@ function ScanReviewContent() {
       {/* Filters */}
       <View style={styles.filterPanel}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-          {filterOptions.map((f) => {
-            const selected = currentPage?.filter === f.value;
+          {FILTER_ORDER.map((f) => {
+            const selected = currentPage?.filter === f;
             return (
-              <TouchableOpacity key={f.value} style={styles.filterTile} onPress={() => handleApplyFilter(f.value)}>
+              <TouchableOpacity key={f} style={styles.filterTile} onPress={() => handleApplyFilter(f)}>
                 <View style={[styles.filterThumb, selected && { borderColor: colors.primary }]}>
-                  {currentPage && <Image source={{ uri: currentPage.originalUri }} style={styles.thumbImg} />}
-                  <View style={[styles.filterIconBadge, selected && { backgroundColor: colors.primary }]}>
-                    <Ionicons name={f.icon} size={12} color="#FFFFFF" />
+                  {currentPage && (
+                    <Image
+                      source={{ uri: currentPage.originalUri }}
+                      style={[styles.thumbImg, { filter: toNativeFilter(getFilterRecipe(f, currentPage.intensity ?? 0.6).css) } as any]}
+                    />
+                  )}
+                  <View style={[styles.filterLabelBar, selected && { backgroundColor: colors.primary }]}>
+                    <Text style={styles.filterLabel} numberOfLines={1}>
+                      {filterLabels[f]}
+                    </Text>
                   </View>
                 </View>
-                <Text style={[styles.filterLabel, selected && { color: colors.primary, fontWeight: '700' }]} numberOfLines={1}>
-                  {f.label}
-                </Text>
               </TouchableOpacity>
             );
           })}
@@ -450,14 +468,61 @@ function ScanReviewContent() {
         )}
       </View>
 
-      {/* Bottom tools */}
+      {/* Bottom tools + save, like the reference editor */}
       <View style={[styles.toolbar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-        <ToolButton icon="add-circle-outline" label={t('addPage')} onPress={handleAddPage} />
-        <ToolButton icon="crop" label={t('crop')} onPress={() => setCropModalVisible(true)} disabled={pageBusy} />
         <ToolButton icon="refresh" label={t('rotate')} onPress={handleRotate} />
-        {pages.length > 1 && <ToolButton icon="copy-outline" label={t('batchEdit')} onPress={handleBatchApply} />}
-        <ToolButton icon="trash-outline" label={t('delete')} onPress={handleDeletePage} danger />
+        <ToolButton icon="crop" label={t('crop')} onPress={() => setCropModalVisible(true)} disabled={pageBusy} />
+        <ToolButton icon="brush-outline" label={t('markup')} onPress={() => setAnnotateMode('markup')} disabled={pageBusy} />
+        <ToolButton icon="create-outline" label={t('sign')} onPress={() => setAnnotateMode('sign')} disabled={pageBusy} />
+        <ToolButton
+          icon="text"
+          label={t('text')}
+          onPress={() => currentPage && router.push({ pathname: '/extract-text', params: { uri: currentPage.originalUri } })}
+          disabled={pageBusy}
+        />
+        <ToolButton icon="ellipsis-horizontal" label={t('more')} onPress={() => setMoreVisible(true)} />
+        <TouchableOpacity
+          style={[styles.saveBtn, { backgroundColor: pendingCount > 0 ? '#3A3F47' : colors.primary }]}
+          onPress={handleSave}
+          disabled={pendingCount > 0 || isSaving}
+          accessibilityLabel={t('save')}
+        >
+          {isSaving || pendingCount > 0 ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Ionicons name="checkmark" size={26} color="#FFFFFF" />
+          )}
+        </TouchableOpacity>
       </View>
+
+      <ActionSheet
+        visible={moreVisible}
+        onClose={() => setMoreVisible(false)}
+        items={[
+          { key: 'add', label: t('addPage'), icon: 'add-circle-outline', onPress: handleAddPage },
+          { key: 'wm', label: t('watermark'), icon: 'water-outline', onPress: () => setAnnotateMode('watermark') },
+          ...(pages.length > 1
+            ? [{ key: 'batch', label: t('batchEdit'), icon: 'copy-outline' as const, onPress: handleBatchApply }]
+            : []),
+          { key: 'delete', label: t('delete'), icon: 'trash-outline', destructive: true, onPress: handleDeletePage },
+        ]}
+      />
+
+      {currentPage && annotateMode && (
+        <AnnotateModal
+          visible
+          mode={annotateMode}
+          imageUri={currentPage.originalUri}
+          onClose={() => setAnnotateMode(null)}
+          onApply={(uri) => {
+            const pageId = currentPage.id;
+            // The annotation is baked into the page; later re-crops start from it too
+            setPages((prev) =>
+              prev.map((p) => (p.id === pageId ? { ...p, sourceUri: uri, corners: null, originalUri: uri, previewUri: uri } : p))
+            );
+          }}
+        />
+      )}
 
       {cropTarget && (
         <CropModal
@@ -514,6 +579,12 @@ const ToolButton: React.FC<{
   </TouchableOpacity>
 );
 
+/** Converts the CSS filter recipe into React Native's style `filter` syntax for thumbnails. */
+function toNativeFilter(css: string): string | undefined {
+  if (!css || css === 'none') return undefined;
+  return css.replace(/(\d+(?:\.\d+)?)%/g, (_, n) => String(Number(n) / 100));
+}
+
 const THUMB_W = 50;
 const THUMB_H = 66;
 
@@ -558,9 +629,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   saveBtn: {
-    width: 44,
+    width: 56,
     height: 44,
-    borderRadius: 22,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 4,
@@ -657,12 +728,10 @@ const styles = StyleSheet.create({
   },
   filterTile: {
     alignItems: 'center',
-    width: 62,
-    gap: 4,
   },
   filterThumb: {
-    width: 56,
-    height: 64,
+    width: 76,
+    height: 92,
     borderRadius: 8,
     borderWidth: 2,
     borderColor: 'transparent',
@@ -680,9 +749,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  filterLabelBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
   filterLabel: {
-    color: EDITOR.textMuted,
+    color: '#FFFFFF',
     fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  compareBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  compareText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   applyAllChip: {
     flexDirection: 'row',

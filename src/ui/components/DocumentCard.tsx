@@ -9,6 +9,9 @@ interface DocumentCardProps {
   variant?: 'list' | 'grid';
   onPress: () => void;
   onMore: () => void;
+  /** Selection mode: shows a checkbox instead of the more button. */
+  selectionMode?: boolean;
+  selected?: boolean;
 }
 
 function formatDate(ms: number): string {
@@ -17,8 +20,22 @@ function formatDate(ms: number): string {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export const DocumentCard: React.FC<DocumentCardProps> = ({ document, variant = 'list', onPress, onMore }) => {
+export const DocumentCard: React.FC<DocumentCardProps> = ({
+  document,
+  variant = 'list',
+  onPress,
+  onMore,
+  selectionMode = false,
+  selected = false,
+}) => {
   const colors = useThemeColors();
+  const check = (
+    <Ionicons
+      name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+      size={variant === 'grid' ? 22 : 24}
+      color={selected ? colors.primary : colors.textMuted}
+    />
+  );
 
   const thumb = document.thumbnail_path ? (
     <Image source={{ uri: document.thumbnail_path }} style={styles.thumbImg} resizeMode="cover" />
@@ -42,9 +59,13 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({ document, variant = 
           <Text style={[styles.gridTitle, { color: colors.text }]} numberOfLines={1}>
             {document.title}
           </Text>
-          <TouchableOpacity onPress={onMore} hitSlop={10} accessibilityLabel="More">
-            <Ionicons name="ellipsis-vertical" size={16} color={colors.textSecondary} />
-          </TouchableOpacity>
+          {selectionMode ? (
+            check
+          ) : (
+            <TouchableOpacity onPress={onMore} hitSlop={10} accessibilityLabel="More">
+              <Ionicons name="ellipsis-vertical" size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
         </View>
         <Text style={[styles.gridDate, { color: colors.textSecondary }]} numberOfLines={1}>
           {formatDate(document.updated_at || document.created_at)}
@@ -56,7 +77,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({ document, variant = 
   return (
     <TouchableOpacity
       activeOpacity={0.7}
-      style={[styles.row, { backgroundColor: colors.surface }]}
+      style={[styles.row, { backgroundColor: selected ? colors.primaryLight : colors.surface }]}
       onPress={onPress}
       onLongPress={onMore}
     >
@@ -82,9 +103,13 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({ document, variant = 
           ) : null}
         </View>
       </View>
-      <TouchableOpacity style={styles.moreBtn} onPress={onMore} hitSlop={8} accessibilityLabel="More">
-        <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
-      </TouchableOpacity>
+      {selectionMode ? (
+        <View style={styles.moreBtn}>{check}</View>
+      ) : (
+        <TouchableOpacity style={styles.moreBtn} onPress={onMore} hitSlop={8} accessibilityLabel="More">
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 };

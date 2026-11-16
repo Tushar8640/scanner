@@ -1,37 +1,65 @@
 import { PageFilter } from '@/core/types';
 
-/**
- * Returns hardware-accelerated CSS filter string corresponding to PageFilter and intensity (0.1 to 1.0)
- */
-export function getCssFilter(filter: PageFilter, intensity: number = 0.6): string {
-  const normIntensity = Math.max(0.1, Math.min(1.0, intensity));
+/** Filters shown in the editor, in display order. */
+export const FILTER_ORDER: PageFilter[] = ['original', 'lighten', 'magic', 'enhanced', 'noshadow', 'bw', 'grayscale'];
 
+/**
+ * Everything needed to render one filter: a CSS filter for the page and an optional
+ * colour-dodge layer (inverted, blurred copy) that flattens shadows and uneven light.
+ * Used by the live preview, the PDF export and the WebView update script.
+ */
+export interface FilterRecipe {
+  css: string;
+  dodgeOpacity: number; // 0 = no shadow-removal layer
+  blurPx: number;
+}
+
+export function getFilterRecipe(filter: PageFilter, intensity: number = 0.6): FilterRecipe {
+  const k = Math.max(0.1, Math.min(1.0, intensity));
+  const blurPx = Math.round(10 + k * 10);
+  const r = (v: number) => Math.round(v);
   switch (filter) {
-    case 'magic': {
-      // Magic Color: balanced contrast + brightness + slight saturation normalization
-      const mcContrast = Math.round(112 + normIntensity * 36); // 115% to 148%
-      const mcBrightness = Math.round(101 + normIntensity * 8);  // 102% to 109%
-      return `contrast(${mcContrast}%) brightness(${mcBrightness}%) saturate(85%)`;
-    }
-    case 'bw': {
-      // Clean B&W Photocopy
-      const bwContrast = Math.round(180 + normIntensity * 150); // 195% to 330%
-      const bwBrightness = Math.round(104 + normIntensity * 14); // 105% to 118%
-      return `grayscale(100%) contrast(${bwContrast}%) brightness(${bwBrightness}%)`;
-    }
-    case 'grayscale': {
-      const grayContrast = Math.round(108 + normIntensity * 20); // 110% to 128%
-      return `grayscale(100%) contrast(${grayContrast}%) brightness(102%)`;
-    }
-    case 'enhanced': {
-      const enhContrast = Math.round(112 + normIntensity * 32); // 115% to 144%
-      const enhBrightness = Math.round(101 + normIntensity * 9);  // 102% to 110%
-      return `contrast(${enhContrast}%) brightness(${enhBrightness}%) saturate(88%)`;
-    }
+    case 'lighten':
+      // Brighter, cleaner paper with colours kept
+      return {
+        css: `brightness(${r(106 + k * 14)}%) contrast(${r(102 + k * 8)}%)`,
+        dodgeOpacity: Math.min(0.6, 0.15 + k * 0.4),
+        blurPx,
+      };
+    case 'magic':
+      // Magic Color: shadow removal + contrast, slightly reduced saturation
+      return {
+        css: `contrast(${r(112 + k * 36)}%) brightness(${r(101 + k * 8)}%) saturate(85%)`,
+        dodgeOpacity: Math.min(0.88, 0.35 + k * 0.52),
+        blurPx,
+      };
+    case 'enhanced':
+      return { css: `contrast(${r(112 + k * 32)}%) brightness(${r(101 + k * 9)}%) saturate(88%)`, dodgeOpacity: 0, blurPx };
+    case 'noshadow':
+      // Strong shadow removal with natural colours and mild contrast
+      return {
+        css: `contrast(${r(104 + k * 10)}%) brightness(${r(100 + k * 4)}%)`,
+        dodgeOpacity: Math.min(0.95, 0.55 + k * 0.4),
+        blurPx: Math.round(14 + k * 12),
+      };
+    case 'bw':
+      // Clean B&W photocopy
+      return {
+        css: `grayscale(100%) contrast(${r(180 + k * 150)}%) brightness(${r(104 + k * 14)}%)`,
+        dodgeOpacity: Math.min(0.92, 0.45 + k * 0.45),
+        blurPx,
+      };
+    case 'grayscale':
+      return { css: `grayscale(100%) contrast(${r(108 + k * 20)}%) brightness(102%)`, dodgeOpacity: 0, blurPx };
     case 'original':
     default:
-      return 'none';
+      return { css: 'none', dodgeOpacity: 0, blurPx };
   }
+}
+
+/** CSS filter string for a filter and intensity (0.1 to 1.0). */
+export function getCssFilter(filter: PageFilter, intensity: number = 0.6): string {
+  return getFilterRecipe(filter, intensity).css;
 }
 
 /**
@@ -66,14 +94,11 @@ export function generatePageMarkup(options: PageMarkupOptions): string {
   const imgSrc = `data:image/jpeg;base64,${base64}`;
   const normIntensity = Math.max(0.1, Math.min(1.0, intensity));
 
-  const containerFilter = getCssFilter(filter, normIntensity);
-  const isMagicMode = filter === 'magic' || filter === 'bw';
-
-  const dodgeOpacity =
-    filter === 'bw'
-      ? Math.min(0.92, 0.45 + normIntensity * 0.45)
-      : Math.min(0.88, 0.35 + normIntensity * 0.52);
-  const blurPx = Math.round(10 + normIntensity * 10);
+  const recipe = getFilterRecipe(filter, normIntensity);
+  const containerFilter = recipe.css;
+  const isMagicMode = recipe.dodgeOpacity > 0;
+  const dodgeOpacity = recipe.dodgeOpacity;
+  const blurPx = recipe.blurPx;
   const dodgeFilter = `invert(100%) blur(${blurPx}px) grayscale(100%)`;
 
   const frameIdAttr = frameId ? `id="${frameId}"` : '';
@@ -213,65 +238,21 @@ export function generatePageHtml(options: {
         </div>
 
         <script>
-          // Instant 60 FPS live filter and intensity update without reloading WebView
-          window.applyFilterUpdate = function(filterName, intensityVal, rotDeg) {
+          // Live filter update without reloading the WebView. The recipe (CSS filter and
+          // shadow-removal layer) is computed in React Native by getFilterRecipe().
+          window.applyRecipe = function(css, dodgeOpacity, blurPx, rotDeg) {
             var frame = document.getElementById('docFrame');
             var dodgeClip = document.getElementById('dodgeClip');
             var docDodge = document.getElementById('docDodge');
             if (!frame) return;
-
-            if (rotDeg !== undefined) {
-              frame.style.transform = 'rotate(' + rotDeg + 'deg)';
-            }
-
-            var intVal = (intensityVal !== undefined && intensityVal >= 0 && intensityVal <= 1) ? intensityVal : 0.6;
-            var dodgeOpacity = Math.min(0.88, 0.35 + intVal * 0.52);
-            var blurPx = Math.round(10 + intVal * 10);
-
-            if (filterName === 'magic') {
-              if (dodgeClip) dodgeClip.style.display = 'block';
-              if (docDodge) {
-                docDodge.style.opacity = dodgeOpacity;
-                docDodge.style.filter = 'invert(100%) blur(' + blurPx + 'px) grayscale(100%)';
-              }
-              var c = Math.round(112 + intVal * 36);
-              var b = Math.round(101 + intVal * 8);
-              frame.style.filter = 'contrast(' + c + '%) brightness(' + b + '%) saturate(85%)';
-            } else if (filterName === 'bw') {
-              if (dodgeClip) dodgeClip.style.display = 'block';
-              if (docDodge) {
-                docDodge.style.opacity = Math.min(0.92, 0.45 + intVal * 0.45);
-                docDodge.style.filter = 'invert(100%) blur(' + blurPx + 'px) grayscale(100%)';
-              }
-              var bwC = Math.round(180 + intVal * 150);
-              var bwB = Math.round(104 + intVal * 14);
-              frame.style.filter = 'grayscale(100%) contrast(' + bwC + '%) brightness(' + bwB + '%)';
-            } else if (filterName === 'enhanced') {
-              if (dodgeClip) dodgeClip.style.display = 'none';
-              var enhC = Math.round(112 + intVal * 32);
-              var enhB = Math.round(101 + intVal * 9);
-              frame.style.filter = 'contrast(' + enhC + '%) brightness(' + enhB + '%) saturate(88%)';
-            } else if (filterName === 'grayscale') {
-              if (dodgeClip) dodgeClip.style.display = 'none';
-              var grayC = Math.round(108 + intVal * 20);
-              frame.style.filter = 'grayscale(100%) contrast(' + grayC + '%) brightness(102%)';
-            } else {
-              // original
-              if (dodgeClip) dodgeClip.style.display = 'none';
-              frame.style.filter = 'none';
+            if (rotDeg !== undefined) frame.style.transform = 'rotate(' + rotDeg + 'deg)';
+            frame.style.filter = css;
+            if (dodgeClip) dodgeClip.style.display = dodgeOpacity > 0 ? 'block' : 'none';
+            if (docDodge && dodgeOpacity > 0) {
+              docDodge.style.opacity = dodgeOpacity;
+              docDodge.style.filter = 'invert(100%) blur(' + blurPx + 'px) grayscale(100%)';
             }
           };
-
-          function handleMsg(e) {
-            try {
-              var data = JSON.parse(e.data);
-              if (data && data.type === 'UPDATE_FILTER') {
-                window.applyFilterUpdate(data.filter, data.intensity, data.rotation);
-              }
-            } catch (err) {}
-          }
-          window.addEventListener('message', handleMsg);
-          document.addEventListener('message', handleMsg);
         </script>
       </body>
     </html>

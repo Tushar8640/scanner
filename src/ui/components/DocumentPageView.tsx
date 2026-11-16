@@ -3,7 +3,7 @@ import { View, StyleSheet, ActivityIndicator, ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
 import { PageFilter } from '@/core/types';
-import { generatePageHtml } from '@/services/image/FilterUtils';
+import { generatePageHtml, getFilterRecipe } from '@/services/image/FilterUtils';
 
 interface DocumentPageViewProps {
   uri: string;
@@ -57,7 +57,8 @@ export const DocumentPageView: React.FC<DocumentPageViewProps> = ({
   // When filter, intensity, or rotation updates and WebView is loaded, send live GPU update without reload
   useEffect(() => {
     if (isWebViewLoadedRef.current && webViewRef.current) {
-      const script = `if (window.applyFilterUpdate) { window.applyFilterUpdate('${filter}', ${intensity}, ${rotation}); }; true;`;
+      const r = getFilterRecipe(filter, intensity);
+      const script = `if (window.applyRecipe) { window.applyRecipe(${JSON.stringify(r.css)}, ${r.dodgeOpacity}, ${r.blurPx}, ${rotation}); }; true;`;
       webViewRef.current.injectJavaScript(script);
     }
   }, [filter, intensity, rotation]);

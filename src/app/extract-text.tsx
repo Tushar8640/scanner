@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, TextInput } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
@@ -13,10 +13,25 @@ import { OcrService } from '@/services/ocr/OcrService';
 export default function ExtractTextScreen() {
   const colors = useThemeColors();
   const { t } = useSettingsStore();
-  const [imageUri, setImageUri] = useState<string | null>(null);
+  // Opened from the editor with a page image: recognise it straight away
+  const params = useLocalSearchParams<{ uri?: string }>();
+  const [imageUri, setImageUri] = useState<string | null>(params.uri ?? null);
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(!!params.uri);
   const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (!params.uri) return;
+    OcrService.recognizeText(params.uri)
+      .then((result) => {
+        setText(result);
+        setDone(true);
+      })
+      .catch((e) => Alert.alert(t('error'), e?.message || 'Text recognition failed'))
+      .finally(() => setBusy(false));
+    // Runs once for the page passed in
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.uri]);
   const inExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
   const run = async (source: 'camera' | 'gallery') => {

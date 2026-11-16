@@ -59,8 +59,15 @@ export class StorageService {
 
   static async saveThumbnail(documentId: string, sourceUri: string): Promise<string> {
     const { docDir } = await this.ensureDocumentDir(documentId);
-    const targetUri = `${docDir}thumb.jpg`;
+    // A new name every time, so image caches never show an outdated cover
+    const targetUri = `${docDir}thumb_${Date.now()}.jpg`;
     await this.safeCopyFile(sourceUri, targetUri);
+    const names = await FileSystem.readDirectoryAsync(docDir);
+    for (const n of names) {
+      if (/^thumb(_\d+)?\.jpg$/.test(n) && `${docDir}${n}` !== targetUri) {
+        await FileSystem.deleteAsync(`${docDir}${n}`, { idempotent: true });
+      }
+    }
     return targetUri;
   }
 

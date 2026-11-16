@@ -31,7 +31,7 @@ type ViewMode = 'list' | 'grid';
 export default function FilesScreen() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
-  const params = useLocalSearchParams<{ search?: string; newFolder?: string }>();
+  const params = useLocalSearchParams<{ search?: string; newFolder?: string; select?: string }>();
   const {
     documents,
     folders,
@@ -48,6 +48,7 @@ export default function FilesScreen() {
     createFolder,
     deleteFolder,
     moveToFolder,
+    mergeDocuments,
   } = useDocumentStore();
   const { t } = useSettingsStore();
   const { busy, importImages } = useScanActions();
@@ -60,7 +61,11 @@ export default function FilesScreen() {
   const [newFolderName, setNewFolderName] = useState('');
   const [renameTarget, setRenameTarget] = useState<Document | null>(null);
   const [renameText, setRenameText] = useState('');
-  const [moveTarget, setMoveTarget] = useState<Document | null>(null);
+  // Documents being moved (one from the "more" sheet, or several from selection mode)
+  const [moveIds, setMoveIds] = useState<string[] | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [working, setWorking] = useState(false);
 
   // Deep links from Home: focus search, or open "Create Folder"
   useEffect(() => {
@@ -69,6 +74,59 @@ export default function FilesScreen() {
   useEffect(() => {
     if (params.newFolder) setTimeout(() => setFolderModalVisible(true), 0);
   }, [params.newFolder]);
+  useEffect(() => {
+    if (params.select) setTimeout(() => setSelectMode(true), 0);
+  }, [params.select]);
+
+  const exitSelect = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+  };
+  const toggleSelected = (docId: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  // Selected ids in the order shown on screen (used as the merge order)
+  const selectedInOrder = () => documents.filter((d) => selected.has(d.id)).map((d) => d.id);
+
+  const handleMerge = async () => {
+    const ids = selectedInOrder();
+    if (ids.length < 2) {
+      Alert.alert(t('mergeDocs'), t('chooseDocsHint'));
+      return;
+    }
+    try {
+      setWorking(true);
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const doc = await mergeDocuments(ids, `${t('mergedTitle')} ${pad(d.getDate())}-${pad(d.getMonth() + 1)} ${pad(d.getHours())}.${pad(d.getMinutes())}`);
+      exitSelect();
+      router.push(`/document/${doc.id}`);
+    } catch (e: any) {
+      Alert.alert(t('error'), e?.message || 'Merge failed');
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    const ids = selectedInOrder();
+    if (ids.length === 0) return;
+    Alert.alert(t('deleteConfirmTitle'), t('deleteSelectedConfirm').replace('{n}', String(ids.length)), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: async () => {
+          for (const id of ids) await softDelete(id);
+          exitSelect();
+        },
+      },
+    ]);
+  };
 
   const activeFolder = folders.find((f) => f.id === activeFolderId) ?? null;
   const searching = searchQuery.trim().length > 0;
@@ -133,7 +191,7 @@ export default function FilesScreen() {
             setRenameText(docSheetTarget.title);
           },
         },
-        { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveTarget(docSheetTarget) },
+        { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveIds([docSheetTarget.id]) },
         {
           key: 'delete',
           label: t('delete'),
@@ -171,7 +229,16 @@ export default function FilesScreen() {
       )}
 
       <View style={[styles.listHeader, { backgroundColor: colors.surface }]}>
-        {activeFolder ? (
+        {selectMode ? (
+          <View style={styles.crumb}>
+            <TouchableOpacity onPress={exitSelect} hitSlop={10} accessibilityLabel={t('cancel')}>
+              <Ionicons name="close" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.selectTitle, { color: colors.text }]}>
+              {t('selectedCount').replace('{n}', String(selected.size))}
+            </Text>
+          </View>
+        ) : activeFolder ? (
           <TouchableOpacity style={styles.crumb} onPress={() => setActiveFolderId(null)}>
             <Ionicons name="chevron-back" size={22} color={colors.text} />
             <Text style={[styles.listTitle, { color: colors.text }]} numberOfLines={1}>
@@ -185,6 +252,16 @@ export default function FilesScreen() {
             <Text style={[styles.listCount, { color: colors.textMuted }]}> ({documents.length})</Text>
           </View>
         )}
+        {selectMode ? (
+          <TouchableOpacity
+            style={styles.selectAllBtn}
+            onPress={() =>
+              setSelected(selected.size === documents.length ? new Set() : new Set(documents.map((d) => d.id)))
+            }
+          >
+            <Text style={[styles.selectAllText, { color: colors.primary }]}>{t('selectAll')}</Text>
+          </TouchableOpacity>
+        ) : (
         <View style={styles.listActions}>
           <TouchableOpacity style={styles.iconBtn} onPress={() => setSortSheetVisible(true)} accessibilityLabel={t('sortBy')}>
             <Ionicons name="swap-vertical" size={22} color={colors.text} />
@@ -196,7 +273,11 @@ export default function FilesScreen() {
           >
             <Ionicons name={viewMode === 'list' ? 'grid-outline' : 'list-outline'} size={22} color={colors.text} />
           </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => setSelectMode(true)} accessibilityLabel={t('select')}>
+            <Ionicons name="checkbox-outline" size={22} color={colors.text} />
+          </TouchableOpacity>
         </View>
+        )}
       </View>
 
       {/* Folders (only at the top level) */}
@@ -256,8 +337,16 @@ export default function FilesScreen() {
           <DocumentCard
             document={item}
             variant={viewMode}
-            onPress={() => router.push(`/document/${item.id}`)}
-            onMore={() => setDocSheetTarget(item)}
+            selectionMode={selectMode}
+            selected={selected.has(item.id)}
+            onPress={() => (selectMode ? toggleSelected(item.id) : router.push(`/document/${item.id}`))}
+            onMore={() => {
+              if (selectMode) {
+                toggleSelected(item.id);
+              } else {
+                setDocSheetTarget(item);
+              }
+            }}
           />
         )}
         columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
@@ -275,7 +364,21 @@ export default function FilesScreen() {
         }
       />
 
-      <ScanFab />
+      {selectMode ? (
+        <View style={[styles.selectBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 8) }]}>
+          <SelectAction icon="git-merge-outline" label={t('merge')} color={colors.text} onPress={handleMerge} disabled={working} />
+          <SelectAction
+            icon="folder-outline"
+            label={t('moveShort')}
+            color={colors.text}
+            onPress={() => selected.size > 0 && setMoveIds(selectedInOrder())}
+            disabled={selected.size === 0}
+          />
+          <SelectAction icon="trash-outline" label={t('delete')} color={colors.danger} onPress={handleDeleteSelected} disabled={selected.size === 0} />
+        </View>
+      ) : (
+        <ScanFab />
+      )}
 
       <ActionSheet
         visible={sortSheetVisible}
@@ -344,30 +447,31 @@ export default function FilesScreen() {
       </Modal>
 
       {/* Move to folder */}
-      <Modal visible={moveTarget !== null} transparent animationType="fade" onRequestClose={() => setMoveTarget(null)}>
+      <Modal visible={moveIds !== null} transparent animationType="fade" onRequestClose={() => setMoveIds(null)}>
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface, maxHeight: 420 }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('moveToFolder')}</Text>
             <ScrollView style={styles.moveList}>
               {[{ id: null as string | null, name: t('noFolderRoot') }, ...folders].map((f) => {
-                const selected = moveTarget?.folder_id === f.id;
+                const current = moveIds?.length === 1 && documents.find((d) => d.id === moveIds[0])?.folder_id === f.id;
                 return (
                   <TouchableOpacity
                     key={f.id ?? 'root'}
-                    style={[styles.moveRow, selected && { backgroundColor: colors.primaryLight }]}
+                    style={[styles.moveRow, current && { backgroundColor: colors.primaryLight }]}
                     onPress={async () => {
-                      if (moveTarget) await moveToFolder(moveTarget.id, f.id);
-                      setMoveTarget(null);
+                      for (const id of moveIds ?? []) await moveToFolder(id, f.id);
+                      setMoveIds(null);
+                      if (selectMode) exitSelect();
                     }}
                   >
                     <Ionicons name={f.id ? 'folder' : 'folder-outline'} size={20} color={colors.primary} />
                     <Text style={[styles.moveName, { color: colors.text }]}>{f.name}</Text>
-                    {selected && <Ionicons name="checkmark" size={20} color={colors.primary} />}
+                    {current && <Ionicons name="checkmark" size={20} color={colors.primary} />}
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
-            <ActionButton title={t('cancel')} variant="outline" onPress={() => setMoveTarget(null)} />
+            <ActionButton title={t('cancel')} variant="outline" onPress={() => setMoveIds(null)} />
           </View>
         </View>
       </Modal>
@@ -375,7 +479,51 @@ export default function FilesScreen() {
   );
 }
 
+const SelectAction: React.FC<{
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  color: string;
+  disabled?: boolean;
+  onPress: () => void;
+}> = ({ icon, label, color, disabled, onPress }) => (
+  <TouchableOpacity style={[styles.selectAction, disabled && { opacity: 0.4 }]} onPress={onPress} disabled={disabled}>
+    <Ionicons name={icon} size={24} color={color} />
+    <Text style={[styles.selectActionText, { color }]}>{label}</Text>
+  </TouchableOpacity>
+);
+
 const styles = StyleSheet.create({
+  selectTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: 12,
+  },
+  selectAllBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  selectAllText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  selectBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 8,
+  },
+  selectAction: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 3,
+  },
+  selectActionText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
   container: {
     flex: 1,
   },

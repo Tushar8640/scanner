@@ -59,6 +59,14 @@
             "enableShrinkResourcesInReleaseBuilds": false
           }
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to scan QR codes",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
       ]
     ],
     "extra": {

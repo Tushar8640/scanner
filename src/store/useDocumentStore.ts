@@ -34,6 +34,17 @@ interface DocumentState {
     filter?: PageFilter
   ) => Promise<Document>;
 
+  /** Appends edited pages to an existing document (the "Add" card on the document screen). */
+  addPages: (
+    documentId: string,
+    images: { originalUri: string; rotation?: PageRotation; filter?: PageFilter; intensity?: number }[]
+  ) => Promise<void>;
+  /** Replaces a saved page's image, e.g. after markup, signature or watermark. Returns the updated page. */
+  replacePageImage: (page: Page, newImageUri: string) => Promise<Page>;
+
+  /** Creates a new document from the pages of several documents, in the given order. Originals are kept. */
+  mergeDocuments: (documentIds: string[], title: string) => Promise<Document>;
+
   updateTitle: (id: string, title: string) => Promise<void>;
   moveToFolder: (documentId: string, folderId: string | null) => Promise<void>;
   softDelete: (id: string) => Promise<void>;
@@ -160,7 +171,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         procPath = await StorageService.saveProcessedImage(docId, pageId, procSource);
       } else {
         // Generate transformed/filtered page (FR-10)
-        const transformed = await ImageService.transformPage(origPath, pageRotation, pageFilter, 'medium');
+        // Rotation stays as page data (applied once by the viewer and the PDF export), so it is not baked in here
+        const transformed = await ImageService.transformPage(origPath, 0, pageFilter, 'medium');
         procPath = await StorageService.saveProcessedImage(docId, pageId, transformed);
       }
 
@@ -178,7 +190,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // Generate thumbnail from first page
-    const thumbUri = await ImageService.generateThumbnail(pages[0].processed_path);
+    const thumbUri = await ImageService.generateThumbnail(pages[0].processed_path, pages[0].rotation);
     const thumbPath = await StorageService.saveThumbnail(docId, thumbUri);
 
     // Initial document record
@@ -253,6 +265,80 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Refresh list
     await get().loadAll();
     return newDoc;
+  },
+
+  addPages: async (documentId, images) => {
+    if (images.length === 0) return;
+    const existing = await DatabaseService.getPagesByDocumentId(documentId);
+    const start = existing.length;
+    const added: Page[] = [];
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const pageId = `page_${start + i + 1}_${Math.random().toString(36).substring(2, 6)}`;
+      const origPath = await StorageService.saveOriginalImage(documentId, pageId, img.originalUri);
+      const filter = img.filter || 'magic';
+      const transformed = await ImageService.transformPage(origPath, 0, filter, 'medium');
+      const procPath = await StorageService.saveProcessedImage(documentId, pageId, transformed);
+      added.push({
+        id: pageId,
+        document_id: documentId,
+        position: start + i,
+        original_path: origPath,
+        processed_path: procPath,
+        filter,
+        intensity: img.intensity ?? 0.6,
+        rotation: img.rotation || 0,
+        ocr_text: null,
+      });
+    }
+    await DatabaseService.insertPages(added);
+    // The old PDF no longer matches the pages
+    await DatabaseService.updateDocument(documentId, {
+      page_count: start + added.length,
+      pdf_path: null,
+      updated_at: Date.now(),
+    });
+    set({ pendingScanImages: [] });
+    await get().loadAll();
+  },
+
+  replacePageImage: async (page, newImageUri) => {
+    // New file names, so cached images of the old version are not shown
+    const name = `${page.id}_${Date.now()}`;
+    const origPath = await StorageService.saveOriginalImage(page.document_id, name, newImageUri);
+    const transformed = await ImageService.transformPage(origPath, 0, page.filter, 'medium');
+    const procPath = await StorageService.saveProcessedImage(page.document_id, name, transformed);
+    await DatabaseService.updatePage(page.id, { original_path: origPath, processed_path: procPath });
+
+    const docUpdates: Partial<Document> = { pdf_path: null, updated_at: Date.now() };
+    if (page.position === 0) {
+      const thumb = await ImageService.generateThumbnail(procPath, page.rotation);
+      docUpdates.thumbnail_path = await StorageService.saveThumbnail(page.document_id, thumb);
+    }
+    await DatabaseService.updateDocument(page.document_id, docUpdates);
+    await get().loadAll();
+    return { ...page, original_path: origPath, processed_path: procPath };
+  },
+
+  mergeDocuments: async (documentIds, title) => {
+    const images: { originalUri: string; previewUri: string; rotation: PageRotation; filter: PageFilter; intensity?: number }[] = [];
+    let folderId: string | null = null;
+    for (let i = 0; i < documentIds.length; i++) {
+      const doc = await DatabaseService.getDocumentById(documentIds[i]);
+      if (i === 0) folderId = doc?.folder_id ?? null;
+      const pages = await DatabaseService.getPagesByDocumentId(documentIds[i]);
+      for (const p of pages) {
+        images.push({
+          originalUri: p.original_path,
+          previewUri: p.original_path,
+          rotation: p.rotation,
+          filter: p.filter,
+          intensity: p.intensity,
+        });
+      }
+    }
+    if (images.length === 0) throw new Error('The selected documents have no pages');
+    return get().createDocument(title, images, folderId);
   },
 
   updateTitle: async (id, title) => {

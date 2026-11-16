@@ -23,7 +23,7 @@ interface Section {
 }
 
 /** Opens the Files tab and asks it to focus search or open Create Folder. */
-function openFiles(action: 'search' | 'newFolder') {
+function openFiles(action: 'search' | 'newFolder' | 'select') {
   router.navigate({ pathname: '/files', params: { [action]: String(Date.now()) } });
 }
 
@@ -43,6 +43,8 @@ export default function ToolsScreen() {
       tools: [
         { key: 'smart', label: 'smartScan', icon: 'scan', tint: colors.primary, onPress: scanWithCamera },
         { key: 'batch', label: 'batchScan', icon: 'copy', tint: colors.primary, onPress: scanWithCamera },
+        { key: 'id', label: 'idCard', icon: 'card', tint: colors.primary, onPress: () => router.push('/id-card') },
+        { key: 'qr', label: 'scanQr', icon: 'qr-code', tint: '#8B5CF6', onPress: () => router.push('/qr-scan') },
       ],
     },
     {
@@ -56,6 +58,15 @@ export default function ToolsScreen() {
       tools: [
         { key: 'ocr', label: 'extractText', icon: 'text', tint: colors.primary, onPress: () => router.push('/extract-text') },
         { key: 'pdf', label: 'toPdf', icon: 'document', tint: '#EF4444', onPress: () => router.navigate('/files') },
+      ],
+    },
+    {
+      key: 'edit',
+      title: 'toolsEdit',
+      tools: [
+        { key: 'merge', label: 'mergeDocs', icon: 'git-merge', tint: '#F59E0B', onPress: () => openFiles('select') },
+        { key: 'sign', label: 'sign', icon: 'create', tint: colors.primary, onPress: () => router.navigate('/files') },
+        { key: 'wm', label: 'watermark', icon: 'water', tint: '#3B82F6', onPress: () => router.navigate('/files') },
       ],
     },
     {

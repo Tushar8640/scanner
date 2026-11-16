@@ -51,11 +51,11 @@ export class ImageService {
   /**
    * Creates a compact thumbnail for lists and grid previews
    */
-  static async generateThumbnail(sourceUri: string): Promise<string> {
+  static async generateThumbnail(sourceUri: string, rotation: PageRotation = 0): Promise<string> {
     try {
       const result = await ImageManipulator.manipulateAsync(
         sourceUri,
-        [{ resize: { width: 320 } }],
+        rotation ? [{ rotate: rotation }, { resize: { width: 320 } }] : [{ resize: { width: 320 } }],
         {
           compress: 0.6,
           format: ImageManipulator.SaveFormat.JPEG,
