@@ -1,11 +1,14 @@
 import { useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, LayoutChangeEvent, type ScrollViewInstance } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, LayoutChangeEvent, Alert, type ScrollViewInstance } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '@/core/theme/colors';
 import { useSettingsStore } from '@/store/useSettingsStore';
+import { useDocumentStore } from '@/store/useDocumentStore';
 import { useScanActions } from '@/ui/hooks/useScanActions';
+import { scannerService } from '@/services/scanner/ScannerService';
+import { ActionSheet } from '@/ui/components/ActionSheet';
 import type { TranslationKey } from '@/i18n';
 
 interface Tool {
@@ -31,10 +34,44 @@ export default function ToolsScreen() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const { t } = useSettingsStore();
-  const { busy, scanWithCamera, importImages } = useScanActions();
+  const { createDocument, activeFolderId } = useDocumentStore();
+  const { busy, scanWithCamera, scanBatch, importImages } = useScanActions();
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [offsets, setOffsets] = useState<Record<string, number>>({});
   const [activeSection, setActiveSection] = useState('scan');
+  const [annotateActionTarget, setAnnotateActionTarget] = useState<'sign' | 'watermark' | null>(null);
+
+  const handleAnnotateChoice = async (source: 'docs' | 'camera' | 'gallery') => {
+    const mode = annotateActionTarget;
+    setAnnotateActionTarget(null);
+    if (!mode) return;
+
+    if (source === 'docs') {
+      router.navigate({ pathname: '/files', params: { toolAction: mode } });
+      return;
+    }
+
+    try {
+      const res =
+        source === 'camera'
+          ? await scannerService.scanWithCamera({ maxNumDocuments: 1 })
+          : await scannerService.importFromGallery({ allowsMultiple: false });
+      if (res && res.pages.length > 0) {
+        const d = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const title = `${t(mode)} ${pad(d.getDate())}-${pad(d.getMonth() + 1)}`;
+        const doc = await createDocument(
+          title,
+          res.pages.map((p) => ({ originalUri: p.uri, previewUri: p.uri, filter: 'original', rotation: 0 })),
+          activeFolderId,
+          'original'
+        );
+        router.push({ pathname: '/document/[id]', params: { id: doc.id, action: mode } });
+      }
+    } catch (e: any) {
+      Alert.alert(t('error'), e?.message || 'Operation failed');
+    }
+  };
 
   const sections: Section[] = [
     {
@@ -42,7 +79,7 @@ export default function ToolsScreen() {
       title: 'toolsScan',
       tools: [
         { key: 'smart', label: 'smartScan', icon: 'scan', tint: colors.primary, onPress: scanWithCamera },
-        { key: 'batch', label: 'batchScan', icon: 'copy', tint: colors.primary, onPress: scanWithCamera },
+        { key: 'batch', label: 'batchScan', icon: 'copy', tint: colors.primary, onPress: scanBatch },
         { key: 'id', label: 'idCard', icon: 'card', tint: colors.primary, onPress: () => router.push('/id-card') },
         { key: 'qr', label: 'scanQr', icon: 'qr-code', tint: '#8B5CF6', onPress: () => router.push('/qr-scan') },
       ],
@@ -57,7 +94,7 @@ export default function ToolsScreen() {
       title: 'toolsConvert',
       tools: [
         { key: 'ocr', label: 'extractText', icon: 'text', tint: colors.primary, onPress: () => router.push('/extract-text') },
-        { key: 'pdf', label: 'toPdf', icon: 'document', tint: '#EF4444', onPress: () => router.navigate('/files') },
+        { key: 'pdf', label: 'toPdf', icon: 'document', tint: '#EF4444', onPress: () => router.push('/to-pdf') },
       ],
     },
     {
@@ -65,8 +102,8 @@ export default function ToolsScreen() {
       title: 'toolsEdit',
       tools: [
         { key: 'merge', label: 'mergeDocs', icon: 'git-merge', tint: '#F59E0B', onPress: () => openFiles('select') },
-        { key: 'sign', label: 'sign', icon: 'create', tint: colors.primary, onPress: () => router.navigate('/files') },
-        { key: 'wm', label: 'watermark', icon: 'water', tint: '#3B82F6', onPress: () => router.navigate('/files') },
+        { key: 'sign', label: 'sign', icon: 'create', tint: colors.primary, onPress: () => setAnnotateActionTarget('sign') },
+        { key: 'wm', label: 'watermark', icon: 'water', tint: '#3B82F6', onPress: () => setAnnotateActionTarget('watermark') },
       ],
     },
     {
@@ -81,7 +118,7 @@ export default function ToolsScreen() {
           onPress: () => openFiles('newFolder'),
         },
         { key: 'trash', label: 'trash', icon: 'trash', tint: '#EF4444', onPress: () => router.push('/trash') },
-        { key: 'lock', label: 'appLockShort', icon: 'lock-closed', tint: '#10B981', onPress: () => router.push('/settings') },
+        { key: 'lock', label: 'appLockShort', icon: 'lock-closed', tint: '#10B981', onPress: () => router.push('/settings/security') },
       ],
     },
   ];
@@ -143,6 +180,32 @@ export default function ToolsScreen() {
           </View>
         ))}
       </ScrollView>
+
+      <ActionSheet
+        visible={annotateActionTarget !== null}
+        title={annotateActionTarget === 'sign' ? t('sign') : t('watermark')}
+        items={[
+          {
+            key: 'docs',
+            label: 'Choose Existing Document',
+            icon: 'folder-open-outline',
+            onPress: () => handleAnnotateChoice('docs'),
+          },
+          {
+            key: 'camera',
+            label: 'Scan New Page',
+            icon: 'camera-outline',
+            onPress: () => handleAnnotateChoice('camera'),
+          },
+          {
+            key: 'gallery',
+            label: 'Import from Gallery',
+            icon: 'images-outline',
+            onPress: () => handleAnnotateChoice('gallery'),
+          },
+        ]}
+        onClose={() => setAnnotateActionTarget(null)}
+      />
     </View>
   );
 }

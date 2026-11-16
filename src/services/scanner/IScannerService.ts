@@ -3,6 +3,7 @@ import { ScanResult } from '@/core/types';
 export interface ScanOptions {
   maxNumDocuments?: number;
   mode?: 'document' | 'id_card';
+  batch?: boolean;
 }
 
 export interface IScannerService {

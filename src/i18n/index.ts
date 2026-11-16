@@ -227,6 +227,7 @@ export const translations = {
     savedToGallery: '{n} image(s) saved to the gallery',
     sharePdf: 'Share PDF',
     shareJpg: 'Share image (JPG)',
+    print: 'Print',
     lastPageWarning: 'A document needs at least one page',
     deletePageConfirm: 'Delete this page?',
 

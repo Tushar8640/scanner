@@ -1,3 +1,4 @@
+import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { IScannerService, ScanOptions } from './IScannerService';
@@ -40,6 +41,48 @@ export class ScannerService implements IScannerService {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
         throw new Error('Camera permission is required to scan documents');
+      }
+
+      if (options?.batch) {
+        const pages: { uri: string; width?: number; height?: number }[] = [];
+        const maxPages = options?.maxNumDocuments || 50;
+
+        while (pages.length < maxPages) {
+          const captureResult = await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            allowsEditing: false,
+            quality: 1,
+          });
+
+          if (captureResult.canceled || !captureResult.assets || captureResult.assets.length === 0) {
+            break;
+          }
+
+          const asset = captureResult.assets[0];
+          pages.push({
+            uri: asset.uri,
+            width: asset.width,
+            height: asset.height,
+          });
+
+          if (pages.length >= maxPages) break;
+
+          const next = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              'Batch Scan',
+              `${pages.length} page(s) scanned. Add next page?`,
+              [
+                { text: 'Finish', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Add Page', onPress: () => resolve(true) },
+              ],
+              { cancelable: false }
+            );
+          });
+          if (!next) break;
+        }
+
+        if (pages.length === 0) return null;
+        return { pages };
       }
 
       const captureResult = await ImagePicker.launchCameraAsync({

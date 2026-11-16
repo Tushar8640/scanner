@@ -33,7 +33,7 @@ type ViewMode = 'list' | 'grid';
 export default function FilesScreen() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
-  const params = useLocalSearchParams<{ search?: string; newFolder?: string; select?: string }>();
+  const params = useLocalSearchParams<{ search?: string; newFolder?: string; select?: string; toolAction?: 'sign' | 'watermark' | 'pdf' }>();
   const {
     documents,
     folders,
@@ -68,6 +68,7 @@ export default function FilesScreen() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [working, setWorking] = useState(false);
+  const [activeToolAction, setActiveToolAction] = useState<'sign' | 'watermark' | 'pdf' | null>(null);
 
   // Deep links from Home: focus search, or open "Create Folder"
   useEffect(() => {
@@ -79,6 +80,11 @@ export default function FilesScreen() {
   useEffect(() => {
     if (params.select) setTimeout(() => setSelectMode(true), 0);
   }, [params.select]);
+  useEffect(() => {
+    if (params.toolAction) {
+      setTimeout(() => setActiveToolAction(params.toolAction ?? null), 0);
+    }
+  }, [params.toolAction]);
 
   const exitSelect = () => {
     setSelectMode(false);
@@ -330,6 +336,27 @@ export default function FilesScreen() {
         </View>
       </View>
 
+      {/* Active tool action banner */}
+      {activeToolAction && (
+        <View style={[styles.toolBanner, { backgroundColor: colors.primary }]}>
+          <Ionicons
+            name={activeToolAction === 'sign' ? 'create' : activeToolAction === 'watermark' ? 'water' : 'document'}
+            size={20}
+            color="#FFFFFF"
+          />
+          <Text style={styles.toolBannerText} numberOfLines={1}>
+            {activeToolAction === 'sign'
+              ? 'Select a document to sign'
+              : activeToolAction === 'watermark'
+              ? 'Select a document to add watermark'
+              : 'Select a document to export as PDF'}
+          </Text>
+          <TouchableOpacity onPress={() => setActiveToolAction(null)} hitSlop={10}>
+            <Ionicons name="close-circle" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+      )}
+
       <FlatList
         key={viewMode}
         data={documents}
@@ -342,7 +369,19 @@ export default function FilesScreen() {
             variant={viewMode}
             selectionMode={selectMode}
             selected={selected.has(item.id)}
-            onPress={() => (selectMode ? toggleSelected(item.id) : router.push(`/document/${item.id}`))}
+            onPress={() => {
+              if (selectMode) {
+                toggleSelected(item.id);
+                return;
+              }
+              if (activeToolAction) {
+                const act = activeToolAction;
+                setActiveToolAction(null);
+                router.push({ pathname: '/document/[id]', params: { id: item.id, action: act } });
+                return;
+              }
+              router.push(`/document/${item.id}`);
+            }}
             onMore={() => {
               if (selectMode) {
                 toggleSelected(item.id);
@@ -677,5 +716,21 @@ const styles = StyleSheet.create({
   moveName: {
     flex: 1,
     fontSize: 15,
+  },
+  toolBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 10,
+  },
+  toolBannerText: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

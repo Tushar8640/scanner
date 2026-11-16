@@ -11,13 +11,16 @@ export function useScanActions() {
   const { t } = useSettingsStore();
   const [busy, setBusy] = useState(false);
 
-  const run = async (source: 'camera' | 'gallery') => {
+  const run = async (source: 'camera' | 'gallery', options?: { batch?: boolean; maxNumDocuments?: number }) => {
     if (busy) return;
     try {
       setBusy(true);
       const result =
         source === 'camera'
-          ? await scannerService.scanWithCamera({ maxNumDocuments: 50 })
+          ? await scannerService.scanWithCamera({
+              batch: options?.batch ?? false,
+              maxNumDocuments: options?.maxNumDocuments ?? (options?.batch ? 50 : 1),
+            })
           : await scannerService.importFromGallery({ allowsMultiple: true });
       if (result && result.pages.length > 0) {
         setPendingScanImages(result.pages);
@@ -32,7 +35,8 @@ export function useScanActions() {
 
   return {
     busy,
-    scanWithCamera: () => run('camera'),
+    scanWithCamera: () => run('camera', { batch: false, maxNumDocuments: 1 }),
+    scanBatch: () => run('camera', { batch: true, maxNumDocuments: 50 }),
     importImages: () => run('gallery'),
   };
 }

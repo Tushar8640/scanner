@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -52,7 +52,7 @@ function safeFileName(title: string): string {
 }
 
 function DocumentDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, action } = useLocalSearchParams<{ id: string; action?: AnnotateMode | 'pdf' }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const engine = useScanEngine();
@@ -75,6 +75,7 @@ function DocumentDetail() {
   const [renameVisible, setRenameVisible] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const [moveVisible, setMoveVisible] = useState(false);
+  const actionHandledRef = useRef(false);
 
   const reload = useCallback(async () => {
     if (!id) return;
@@ -84,12 +85,20 @@ function DocumentDetail() {
       setDocument(doc);
       setPages(list);
       if (doc) setTitleInput(doc.title);
+      if (!actionHandledRef.current && action && list.length > 0) {
+        actionHandledRef.current = true;
+        if (action === 'pdf') {
+          setPdfModalVisible(true);
+        } else if (action === 'sign' || action === 'watermark' || action === 'markup') {
+          setAnnotate({ mode: action, page: list[0] });
+        }
+      }
     } catch (e) {
       console.error('Failed to load document:', e);
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [action, id]);
 
   // Reload when returning from "Add pages"
   useFocusEffect(

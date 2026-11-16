@@ -94,6 +94,12 @@ export default function RootLayout() {
             title: t('extractText'),
           }}
         />
+        <Stack.Screen
+          name="to-pdf"
+          options={{
+            title: t('toPdf'),
+          }}
+        />
         {/* settings/* and premium set their own titles */}
         <Stack.Screen
           name="trash"
