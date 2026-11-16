@@ -94,6 +94,10 @@ function ScanReviewContent() {
   const [cropModalVisible, setCropModalVisible] = useState(false);
   const [applyToAll, setApplyToAll] = useState(false);
   const [stripDragging, setStripDragging] = useState(false);
+  // New pages wait here for the user to confirm their crop, one after another (like the reference flow)
+  const [reviewQueue, setReviewQueue] = useState<string[]>([]);
+  const [reviewedCount, setReviewedCount] = useState(0);
+  const cropAppliedRef = useRef(false);
 
   const currentPage = pages[currentPageIndex];
   const engine = useScanEngine();
@@ -122,8 +126,13 @@ function ScanReviewContent() {
       }
       autoCropBusyRef.current = false;
       setPages((prev) => prev.map((p) => (p.id === next.id ? { ...p, ...update } : p)));
+      setReviewQueue((q) => [...q, next.id]);
     })();
   }, [pages, engine]);
+
+  const reviewPage = reviewQueue.length > 0 ? pages.find((p) => p.id === reviewQueue[0]) : undefined;
+  const reviewing = !!reviewPage;
+  const cropTarget = reviewPage ?? (cropModalVisible ? currentPage : undefined);
 
   // Drag-to-reorder from the page strip; the selected page stays selected
   const handleReorder = (from: number, to: number) => {
@@ -450,21 +459,39 @@ function ScanReviewContent() {
         <ToolButton icon="trash-outline" label={t('delete')} onPress={handleDeletePage} danger />
       </View>
 
-      {currentPage && (
+      {cropTarget && (
         <CropModal
-          visible={cropModalVisible}
-          sourceUri={currentPage.sourceUri}
-          initialCorners={currentPage.corners}
-          onClose={() => setCropModalVisible(false)}
-          onApply={({ uri, corners }) => {
-            const pageId = currentPage.id;
+          visible={reviewing || cropModalVisible}
+          sourceUri={cropTarget.sourceUri}
+          initialCorners={cropTarget.corners}
+          progress={reviewing ? { index: reviewedCount + 1, total: reviewedCount + reviewQueue.length + pendingCount } : undefined}
+          onClose={() => {
+            if (reviewing) {
+              if (cropAppliedRef.current) {
+                // Next: move on to the following new page
+                setReviewQueue((q) => q.slice(1));
+                setReviewedCount((n) => (reviewQueue.length <= 1 && pendingCount === 0 ? 0 : n + 1));
+              } else {
+                // Back: keep the automatic crops for the remaining pages and go to the editor
+                setReviewQueue([]);
+                setReviewedCount(0);
+              }
+            }
+            cropAppliedRef.current = false;
+            setCropModalVisible(false);
+          }}
+          onApply={({ uri, corners, sourceUri }) => {
+            cropAppliedRef.current = true;
+            const pageId = cropTarget.id;
             setPages((prev) =>
               prev.map((p) =>
                 p.id === pageId
-                  ? { ...p, corners: isFullQuad(corners) ? null : corners, originalUri: uri, previewUri: uri }
+                  ? { ...p, sourceUri, corners: isFullQuad(corners) ? null : corners, originalUri: uri, previewUri: uri }
                   : p
               )
             );
+            const idx = pages.findIndex((p) => p.id === pageId);
+            if (idx >= 0) setCurrentPageIndex(idx);
           }}
         />
       )}

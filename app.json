@@ -50,6 +50,15 @@
           "photosPermission": "Allow $(PRODUCT_NAME) to access your photos",
           "savePhotosPermission": "Allow $(PRODUCT_NAME) to save photos"
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": false,
+            "enableShrinkResourcesInReleaseBuilds": false
+          }
+        }
       ]
     ],
     "extra": {

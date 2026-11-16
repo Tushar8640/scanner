@@ -11,6 +11,7 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '@/core/theme/colors';
 import { useSettingsStore } from '@/store/useSettingsStore';
@@ -24,7 +25,10 @@ interface CropModalProps {
   /** Current crop corners; null means detect automatically when opened. */
   initialCorners: Quad | null;
   onClose: () => void;
-  onApply: (result: { uri: string; corners: Quad }) => void;
+  /** sourceUri changes when the page was rotated inside the crop screen. */
+  onApply: (result: { uri: string; corners: Quad; sourceUri: string }) => void;
+  /** Shown as "2/5" when reviewing several new pages one after another. */
+  progress?: { index: number; total: number };
 }
 
 type ActiveHandle = { kind: 'corner' | 'edge'; index: number } | null;
@@ -44,7 +48,13 @@ export const CropModal: React.FC<CropModalProps> = ({ visible, onClose, ...rest 
   );
 };
 
-const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, initialCorners, onClose, onApply }) => {
+/** Rotates normalised corners together with the image, keeping TL, TR, BR, BL order. */
+function rotateQuad(q: Quad, clockwise: boolean): Quad {
+  const m = q.map((p) => (clockwise ? { x: 1 - p.y, y: p.x } : { x: p.y, y: 1 - p.x }));
+  return (clockwise ? [m[3], m[0], m[1], m[2]] : [m[1], m[2], m[3], m[0]]) as Quad;
+}
+
+const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, initialCorners, onClose, onApply, progress }) => {
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   const insets = useSafeAreaInsets();
@@ -57,6 +67,10 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
   const [detecting, setDetecting] = useState(initialCorners === null);
   const [applying, setApplying] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [src, setSrc] = useState(sourceUri);
+  const [rotating, setRotating] = useState(false);
+  // Last auto-detected corners, so "All" can toggle back to them
+  const [detected, setDetected] = useState<Quad | null>(initialCorners && !isFullQuad(initialCorners) ? initialCorners : null);
 
   const cornersRef = useRef<Quad>(corners);
   const startRef = useRef<Quad>(corners);
@@ -70,11 +84,12 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
   // Runs edge detection; callers set `detecting` first. State is only set in the promise callbacks.
   const detectEdges = () => {
     const finish = (found: Quad | null) => {
+      if (found) setDetected(found);
       updateCorners(found ?? cloneQuad(FULL_QUAD));
       setNotice(found ? null : t('noEdgesFound'));
       setDetecting(false);
     };
-    engine.detect(sourceUri).then(
+    engine.detect(src).then(
       (res) => finish(res.corners),
       (e) => {
         console.warn('Edge detection failed:', e);
@@ -83,10 +98,34 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
     );
   };
 
-  const handleAutoDetect = () => {
-    setDetecting(true);
+  // "All" selects the whole image; pressed again ("Auto") it returns to the detected edges
+  const handleToggleAll = () => {
     setNotice(null);
-    detectEdges();
+    if (!isFullQuad(cornersRef.current)) {
+      updateCorners(cloneQuad(FULL_QUAD));
+    } else if (detected) {
+      updateCorners(cloneQuad(detected));
+    } else {
+      setDetecting(true);
+      detectEdges();
+    }
+  };
+
+  const handleRotate = async (clockwise: boolean) => {
+    if (rotating) return;
+    try {
+      setRotating(true);
+      const ref = await ImageManipulator.manipulate(src).rotate(clockwise ? 90 : -90).renderAsync();
+      const out = await ref.saveAsync({ format: SaveFormat.JPEG, compress: 0.95 });
+      setImageSize({ w: out.width, h: out.height });
+      setSrc(out.uri);
+      updateCorners(rotateQuad(cornersRef.current, clockwise));
+      setDetected((d) => (d ? rotateQuad(d, clockwise) : d));
+    } catch (e) {
+      console.warn('Rotate failed:', e);
+    } finally {
+      setRotating(false);
+    }
   };
 
   useEffect(() => {
@@ -153,18 +192,13 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
   const lineColor = valid ? colors.primary : INVALID_COLOR;
   const px = (p: Point) => ({ x: p.x * dispW, y: p.y * dispH });
 
-  const handleWholePage = () => {
-    setNotice(null);
-    updateCorners(cloneQuad(FULL_QUAD));
-  };
-
   const handleApply = async () => {
     if (!valid || applying) return;
     try {
       setApplying(true);
       const q = cloneQuad(cornersRef.current);
-      const uri = isFullQuad(q) ? sourceUri : await engine.warp(sourceUri, q);
-      onApply({ uri, corners: q });
+      const uri = isFullQuad(q) ? src : await engine.warp(src, q);
+      onApply({ uri, corners: q, sourceUri: src });
       onClose();
     } catch (e) {
       console.warn('Crop failed:', e);
@@ -194,7 +228,7 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
         ]}
       >
         <Image
-          source={{ uri: sourceUri }}
+          source={{ uri: src }}
           style={{
             position: 'absolute',
             width: dispW * LOUPE_ZOOM,
@@ -214,22 +248,26 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.iconBtn} accessibilityLabel={t('cancel')}>
-            <Ionicons name="close" size={26} color="#FFFFFF" />
+            <Ionicons name="arrow-back" size={26} color="#FFFFFF" />
           </TouchableOpacity>
           <View style={styles.titleWrap}>
-            <Text style={styles.title}>{t('cropTitle')}</Text>
-            <Text style={[styles.subtitle, !valid && { color: INVALID_COLOR }]}>
+            <Text style={styles.title}>{t('crop')}</Text>
+            <Text style={[styles.subtitle, !valid && { color: INVALID_COLOR }]} numberOfLines={1}>
               {valid ? t('cropHint') : t('invalidCrop')}
             </Text>
           </View>
-          <View style={styles.iconBtn} />
+          {progress && progress.total > 1 ? (
+            <Text style={styles.progress}>
+              {progress.index}/{progress.total}
+            </Text>
+          ) : null}
         </View>
 
         {/* Image + quad editor */}
         <View style={styles.area} onLayout={onAreaLayout}>
           {dispW > 0 && (
             <View style={{ width: dispW, height: dispH }}>
-              <Image source={{ uri: sourceUri }} style={{ width: dispW, height: dispH }} />
+              <Image source={{ uri: src }} style={{ width: dispW, height: dispH }} />
 
               {/* Quad outline */}
               {corners.map((c, i) => (
@@ -282,7 +320,7 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
 
           {loupe}
 
-          {(detecting || !imageSize) && (
+          {(detecting || rotating || !imageSize) && (
             <View style={styles.busy}>
               <ActivityIndicator size="large" color="#FFFFFF" />
               <Text style={styles.busyText}>{t('detectingEdges')}</Text>
@@ -297,27 +335,32 @@ const CropEditor: React.FC<Omit<CropModalProps, 'visible'>> = ({ sourceUri, init
           </View>
         )}
 
-        {/* Bottom bar */}
+        {/* Bottom bar: rotate left/right, whole image <-> auto edges, next */}
         <View style={styles.toolbar}>
-          <TouchableOpacity style={styles.tool} onPress={handleAutoDetect} disabled={detecting || applying}>
-            <Ionicons name="scan-outline" size={24} color="#FFFFFF" />
-            <Text style={styles.toolText}>{t('autoCrop')}</Text>
+          <TouchableOpacity style={styles.tool} onPress={() => handleRotate(false)} disabled={detecting || applying || rotating}>
+            <Ionicons name="return-up-back" size={24} color="#FFFFFF" />
+            <Text style={styles.toolText}>{t('rotateLeft')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.tool} onPress={handleWholePage} disabled={detecting || applying}>
-            <Ionicons name="expand-outline" size={24} color="#FFFFFF" />
-            <Text style={styles.toolText}>{t('wholePage')}</Text>
+          <TouchableOpacity style={styles.tool} onPress={() => handleRotate(true)} disabled={detecting || applying || rotating}>
+            <Ionicons name="return-up-forward" size={24} color="#FFFFFF" />
+            <Text style={styles.toolText}>{t('rotateRight')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tool} onPress={handleToggleAll} disabled={detecting || applying || rotating}>
+            <Ionicons name={isFullQuad(corners) ? 'scan-outline' : 'expand-outline'} size={24} color="#FFFFFF" />
+            <Text style={styles.toolText}>{isFullQuad(corners) ? t('autoShort') : t('all')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.doneBtn, { backgroundColor: valid ? colors.primary : '#555555' }]}
+            style={[styles.tool, !valid && styles.toolDisabled]}
             onPress={handleApply}
-            disabled={!valid || detecting || applying}
+            disabled={!valid || detecting || applying || rotating}
             accessibilityLabel={t('applyCrop')}
           >
             {applying ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <ActivityIndicator size="small" color={colors.primary} />
             ) : (
-              <Ionicons name="checkmark" size={28} color="#FFFFFF" />
+              <Ionicons name="arrow-forward" size={24} color={colors.primary} />
             )}
+            <Text style={[styles.toolText, { color: colors.primary }]}>{t('next')}</Text>
           </TouchableOpacity>
         </View>
     </View>
@@ -363,8 +406,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   titleWrap: {
-    alignItems: 'center',
     flex: 1,
+    paddingLeft: 8,
   },
   title: {
     color: '#FFFFFF',
@@ -472,6 +515,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     minWidth: 72,
+  },
+  toolDisabled: {
+    opacity: 0.4,
+  },
+  progress: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    paddingHorizontal: 12,
   },
   toolText: {
     color: '#FFFFFF',

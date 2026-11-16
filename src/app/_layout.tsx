@@ -66,7 +66,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen
-          name="index"
+          name="(tabs)"
           options={{
             headerShown: false,
           }}
@@ -82,6 +82,12 @@ export default function RootLayout() {
           name="document/[id]"
           options={{
             headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="extract-text"
+          options={{
+            title: t('extractText'),
           }}
         />
         <Stack.Screen
