@@ -19,6 +19,7 @@ import { useThemeColors } from '@/core/theme/colors';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { ANNOTATE_HTML, SIGNATURE_PAD_HTML } from '@/services/image/annotateHtml';
 import { SignatureService } from '@/services/signature/SignatureService';
+import { PremiumService } from '@/services/monetization/PremiumService';
 
 export type AnnotateMode = 'markup' | 'sign' | 'watermark';
 
@@ -71,7 +72,15 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
   }, []);
 
   useEffect(() => {
-    if (mode === 'sign') refreshSigs();
+    if (mode !== 'sign') return;
+    // Signing can become a Premium feature (see src/core/config/monetization.ts)
+    if (!PremiumService.require('signature')) {
+      onClose();
+      return;
+    }
+    refreshSigs();
+    // Runs when the editor opens; onClose identity changes on every parent render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, refreshSigs]);
 
   // Watermark preview follows the inputs live

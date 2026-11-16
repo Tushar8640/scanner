@@ -2,6 +2,8 @@ export type PageFilter = 'original' | 'lighten' | 'magic' | 'enhanced' | 'noshad
 export type PageRotation = 0 | 90 | 180 | 270;
 export type PdfPageSize = 'A4' | 'Letter' | 'Fit';
 export type PdfQuality = 'low' | 'medium' | 'high';
+/** How new documents are named. */
+export type DocNameFormat = 'doc_datetime' | 'scan_date' | 'date_only';
 export type AppTheme = 'system' | 'light' | 'dark';
 
 export interface Folder {
@@ -45,6 +47,11 @@ export interface AppSettings {
   app_lock_enabled: boolean;
   pin_code: string | null;
   auto_save_to_gallery: boolean;
+  /** Detect edges and straighten pages automatically after scanning or importing. */
+  auto_crop: boolean;
+  /** Show the crop screen for each new page before the editor. */
+  crop_review: boolean;
+  doc_name_format: DocNameFormat;
 }
 
 export interface ScanResult {

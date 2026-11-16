@@ -9,6 +9,7 @@ import { DatabaseService } from '@/services/database/DatabaseService';
 import { Document } from '@/core/types';
 import { useScanActions } from '@/ui/hooks/useScanActions';
 import { ScanFab } from '@/ui/components/ScanFab';
+import { AdBanner } from '@/ui/components/AdBanner';
 import type { TranslationKey } from '@/i18n';
 
 const RECENT_LIMIT = 10;
@@ -113,6 +114,8 @@ export default function HomeScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        <AdBanner placement="home_banner" />
 
         {/* Recents */}
         <View style={[styles.recents, { backgroundColor: colors.surface }]}>

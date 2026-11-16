@@ -8,9 +8,11 @@ import { useThemeColors } from '@/core/theme/colors';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { scannerService } from '@/services/scanner/ScannerService';
 import { OcrService } from '@/services/ocr/OcrService';
+import { usePremiumGate } from '@/ui/hooks/usePremiumGate';
 
 /** Extract Text tool: pick or scan an image and run on-device text recognition. */
 export default function ExtractTextScreen() {
+  usePremiumGate('ocr');
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   // Opened from the editor with a page image: recognise it straight away

@@ -8,9 +8,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '@/core/theme/colors';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { ActionButton } from '@/ui/components/ActionButton';
+import { usePremiumGate } from '@/ui/hooks/usePremiumGate';
 
 /** QR code scanner (on-device, via expo-camera). */
 export default function QrScanScreen() {
+  usePremiumGate('qr_scan');
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   const insets = useSafeAreaInsets();

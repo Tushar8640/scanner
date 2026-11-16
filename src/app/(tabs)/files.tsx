@@ -22,6 +22,8 @@ import { DocumentCard } from '@/ui/components/DocumentCard';
 import { ActionButton } from '@/ui/components/ActionButton';
 import { ActionSheet, ActionSheetItem } from '@/ui/components/ActionSheet';
 import { ScanFab } from '@/ui/components/ScanFab';
+import { AdBanner } from '@/ui/components/AdBanner';
+import { PremiumService } from '@/services/monetization/PremiumService';
 import { useScanActions } from '@/ui/hooks/useScanActions';
 import { useThemeColors } from '@/core/theme/colors';
 import { Document, Folder } from '@/core/types';
@@ -93,6 +95,7 @@ export default function FilesScreen() {
   const selectedInOrder = () => documents.filter((d) => selected.has(d.id)).map((d) => d.id);
 
   const handleMerge = async () => {
+    if (!PremiumService.require('merge')) return;
     const ids = selectedInOrder();
     if (ids.length < 2) {
       Alert.alert(t('mergeDocs'), t('chooseDocsHint'));
@@ -351,6 +354,7 @@ export default function FilesScreen() {
         )}
         columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
         contentContainerStyle={styles.listContent}
+        ListFooterComponent={<AdBanner placement="files_banner" />}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadAll} tintColor={colors.primary} />}
         ListEmptyComponent={
           !isLoading && (activeFolder || searching || folders.length === 0) ? (

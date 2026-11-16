@@ -10,6 +10,7 @@ import { isFullQuad } from '@/services/scanner/quad';
 import { ScanEngineProvider, useScanEngine } from '@/ui/components/ScanEngine';
 import { ActionSheet } from '@/ui/components/ActionSheet';
 import { ActionButton } from '@/ui/components/ActionButton';
+import { usePremiumGate } from '@/ui/hooks/usePremiumGate';
 
 type Side = 'front' | 'back';
 
@@ -23,6 +24,7 @@ export default function IdCardScreen() {
 
 /** ID card mode: front and back are auto-cropped and placed together on one A4 page. */
 function IdCardContent() {
+  usePremiumGate('id_card');
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   const { createDocument, activeFolderId } = useDocumentStore();

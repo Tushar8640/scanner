@@ -6,6 +6,8 @@ import { ImageService } from '@/services/image/ImageService';
 import { OcrService } from '@/services/ocr/OcrService';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { useSettingsStore } from './useSettingsStore';
+import { formatDocumentName } from '@/core/utils/docName';
+import { GalleryService } from '@/services/storage/GalleryService';
 
 export type SortOption = 'newest' | 'oldest' | 'nameAsc' | 'nameDesc';
 
@@ -55,15 +57,6 @@ interface DocumentState {
   deleteFolder: (id: string) => Promise<void>;
 }
 
-function generateDefaultTitle(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const h = String(now.getHours()).padStart(2, '0');
-  const min = String(now.getMinutes()).padStart(2, '0');
-  return `Doc_${y}${m}${d}_${h}${min}`;
-}
 
 function sortDocuments(docs: Document[], sortBy: SortOption): Document[] {
   const list = [...docs];
@@ -148,7 +141,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     const docId = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const finalTitle = title && title.trim().length > 0 ? title.trim() : generateDefaultTitle();
+    const finalTitle =
+      title && title.trim().length > 0 ? title.trim() : formatDocumentName(useSettingsStore.getState().doc_name_format);
     const now = Date.now();
 
     await StorageService.ensureDocumentDir(docId);
@@ -210,32 +204,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     await DatabaseService.insertDocument(newDoc);
     await DatabaseService.insertPages(pages);
 
-    // Auto-save to gallery if enabled in settings (Step 6)
-    try {
-      const autoSave = useSettingsStore.getState().auto_save_to_gallery;
-      if (autoSave && Constants.executionEnvironment !== ExecutionEnvironment.StoreClient) {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const MediaLibrary = require('expo-media-library');
-        if (MediaLibrary) {
-          const { status } = await (MediaLibrary.requestPermissionsAsync
-            ? MediaLibrary.requestPermissionsAsync()
-            : Promise.resolve({ status: 'undetermined' }));
-          if (status === 'granted') {
-            for (const page of pages) {
-              const savePath = page.processed_path || page.original_path;
-              if (savePath) {
-                if (MediaLibrary.Asset && typeof MediaLibrary.Asset.create === 'function') {
-                  await MediaLibrary.Asset.create(savePath);
-                } else if (typeof MediaLibrary.createAssetAsync === 'function') {
-                  await MediaLibrary.createAssetAsync(savePath);
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (galleryErr) {
-      console.warn('Auto-save to gallery warning:', galleryErr);
+    // Settings > Scan > Auto-save to Gallery
+    if (useSettingsStore.getState().auto_save_to_gallery && Constants.executionEnvironment !== ExecutionEnvironment.StoreClient) {
+      GalleryService.saveImages(pages.map((p) => p.processed_path || p.original_path).filter(Boolean)).catch((e) =>
+        console.warn('Auto-save to gallery failed:', e)
+      );
     }
 
     // Run OCR in background after saving so save isn't held up (Step 4)

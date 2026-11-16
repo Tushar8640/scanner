@@ -20,12 +20,13 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { scannerService } from '@/services/scanner/ScannerService';
 import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { CropModal } from '@/ui/components/CropModal';
+import { AdsService } from '@/services/monetization/AdsService';
 import { AnnotateModal, AnnotateMode } from '@/ui/components/AnnotateModal';
 import { ActionSheet } from '@/ui/components/ActionSheet';
 import { FILTER_ORDER, getFilterRecipe } from '@/services/image/FilterUtils';
 import { DraggableGrid, moveItem } from '@/ui/components/DraggableGrid';
 import { ScanEngineProvider, useScanEngine } from '@/ui/components/ScanEngine';
-import { Quad, isFullQuad } from '@/services/scanner/quad';
+import { FULL_QUAD, Quad, isFullQuad } from '@/services/scanner/quad';
 import { IntensitySlider } from '@/ui/components/IntensitySlider';
 import { darkColors, useThemeColors } from '@/core/theme/colors';
 
@@ -76,7 +77,7 @@ function ScanReviewContent() {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const { createDocument, addPages, activeFolderId, pendingScanImages } = useDocumentStore();
-  const { default_filter, t } = useSettingsStore();
+  const { default_filter, auto_crop, crop_review, t } = useSettingsStore();
 
   const [pages, setPages] = useState<EditablePage[]>(() => {
     // Check pendingScanImages first (from Zustand store for instantaneous reliable loading)
@@ -90,7 +91,7 @@ function ScanReviewContent() {
         console.error('Failed to parse params.rawImages:', e);
       }
     }
-    return toEditablePages(list, 'page', 'magic');
+    return toEditablePages(list, 'page', useSettingsStore.getState().default_filter);
   });
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [docTitle, setDocTitle] = useState('');
@@ -124,7 +125,8 @@ function ScanReviewContent() {
         // prepare() also fixes EXIF rotation, so the crop screen and the engine agree on orientation
         const prepared = await engine.prepare(next.sourceUri);
         update = { ...update, sourceUri: prepared.uri, originalUri: prepared.uri, previewUri: prepared.uri };
-        if (prepared.corners && !isFullQuad(prepared.corners)) {
+        // Settings > Scan > Auto Crop: when off, keep the whole (orientation-fixed) image
+        if (auto_crop && prepared.corners && !isFullQuad(prepared.corners)) {
           const croppedUri = await engine.warp(prepared.uri, prepared.corners);
           update = { ...update, corners: prepared.corners, originalUri: croppedUri, previewUri: croppedUri };
         }
@@ -133,9 +135,10 @@ function ScanReviewContent() {
       }
       autoCropBusyRef.current = false;
       setPages((prev) => prev.map((p) => (p.id === next.id ? { ...p, ...update } : p)));
-      setReviewQueue((q) => [...q, next.id]);
+      // Settings > Scan > Review crop: show the crop screen for each new page
+      if (crop_review) setReviewQueue((q) => [...q, next.id]);
     })();
-  }, [pages, engine]);
+  }, [pages, engine, auto_crop, crop_review]);
 
   const reviewPage = reviewQueue.length > 0 ? pages.find((p) => p.id === reviewQueue[0]) : undefined;
   const reviewing = !!reviewPage;
@@ -297,6 +300,7 @@ function ScanReviewContent() {
       );
       setIsSaving(false);
       router.replace(`/document/${newDoc.id}`);
+      AdsService.maybeShowInterstitial('after_save');
     } catch (e: any) {
       setIsSaving(false);
       console.error('Save failed:', e);
@@ -528,7 +532,8 @@ function ScanReviewContent() {
         <CropModal
           visible={reviewing || cropModalVisible}
           sourceUri={cropTarget.sourceUri}
-          initialCorners={cropTarget.corners}
+          // With Auto Crop off, start from the whole image instead of detecting edges
+          initialCorners={cropTarget.corners ?? (auto_crop ? null : FULL_QUAD)}
           progress={reviewing ? { index: reviewedCount + 1, total: reviewedCount + reviewQueue.length + pendingCount } : undefined}
           onClose={() => {
             if (reviewing) {

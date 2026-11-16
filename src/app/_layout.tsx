@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
+import { usePremiumStore } from '@/store/usePremiumStore';
 import { AuthGate } from '@/ui/components/AuthGate';
 import { useThemeColors } from '@/core/theme/colors';
 
@@ -15,6 +16,7 @@ export default function RootLayout() {
   const [startupError, setStartupError] = useState<string | null>(null);
 
   useEffect(() => {
+    usePremiumStore.getState().initPremium().catch(console.warn);
     initSettings().catch((e) => {
       console.warn('initSettings warning:', e);
       setStartupError(`Settings: ${e?.message || String(e)}`);
@@ -92,12 +94,7 @@ export default function RootLayout() {
             title: t('extractText'),
           }}
         />
-        <Stack.Screen
-          name="settings"
-          options={{
-            title: t('settings'),
-          }}
-        />
+        {/* settings/* and premium set their own titles */}
         <Stack.Screen
           name="trash"
           options={{

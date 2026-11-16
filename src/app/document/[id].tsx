@@ -29,6 +29,8 @@ import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { DraggableGrid, moveItem } from '@/ui/components/DraggableGrid';
 import { ScanEngineProvider, useScanEngine } from '@/ui/components/ScanEngine';
 import { scannerService } from '@/services/scanner/ScannerService';
+import { PremiumService } from '@/services/monetization/PremiumService';
+import { AdsService } from '@/services/monetization/AdsService';
 import { useThemeColors } from '@/core/theme/colors';
 import { ImageService } from '@/services/image/ImageService';
 import { StorageService } from '@/services/storage/StorageService';
@@ -165,6 +167,7 @@ function DocumentDetail() {
       setDocument((prev) => (prev ? { ...prev, pdf_path: path } : prev));
       setPdfModalVisible(false);
       setBusyText(null);
+      AdsService.maybeShowInterstitial('after_export');
       const fileName = `${safeFileName(document.title)}.pdf`;
       Alert.alert(t('pdfExported'), t('choosePdfAction'), [
         {
@@ -533,7 +536,10 @@ function DocumentDetail() {
                 <TouchableOpacity
                   key={q}
                   style={[styles.pill, { backgroundColor: quality === q ? colors.primary : colors.surfaceVariant }]}
-                  onPress={() => setQuality(q)}
+                  onPress={() => {
+                    if (q === 'high' && !PremiumService.require('pdf_high_quality')) return;
+                    setQuality(q);
+                  }}
                 >
                   <Text style={[styles.pillText, { color: quality === q ? colors.primaryContrast : colors.text }]}>
                     {q === 'low' ? t('qualityLow') : q === 'medium' ? t('qualityMedium') : t('qualityHigh')}
