@@ -3,7 +3,6 @@ export type PageRotation = 0 | 90 | 180 | 270;
 export type PdfPageSize = 'A4' | 'Letter' | 'Fit';
 export type PdfQuality = 'low' | 'medium' | 'high';
 export type AppTheme = 'system' | 'light' | 'dark';
-export type AppLanguage = 'bn' | 'en';
 
 export interface Folder {
   id: string;
@@ -39,7 +38,6 @@ export interface Page {
 }
 
 export interface AppSettings {
-  language: AppLanguage;
   theme: AppTheme;
   default_filter: PageFilter;
   default_page_size: PdfPageSize;

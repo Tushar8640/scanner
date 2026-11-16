@@ -469,8 +469,8 @@ function ScanReviewContent() {
       </View>
 
       {/* Bottom tools + save, like the reference editor */}
-      <View style={[styles.toolbar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-        <ToolButton icon="refresh" label={t('rotate')} onPress={handleRotate} />
+      <View style={[styles.toolbar, { paddingBottom: Math.max(insets.bottom + 4, 12) }]}>
+        <ToolButton icon="refresh" label={t('rotateShort')} onPress={handleRotate} />
         <ToolButton icon="crop" label={t('crop')} onPress={() => setCropModalVisible(true)} disabled={pageBusy} />
         <ToolButton icon="brush-outline" label={t('markup')} onPress={() => setAnnotateMode('markup')} disabled={pageBusy} />
         <ToolButton icon="create-outline" label={t('sign')} onPress={() => setAnnotateMode('sign')} disabled={pageBusy} />
@@ -573,7 +573,7 @@ const ToolButton: React.FC<{
 }> = ({ icon, label, onPress, disabled, danger }) => (
   <TouchableOpacity style={[styles.toolBtn, disabled && styles.toolBtnDisabled]} onPress={onPress} disabled={disabled}>
     <Ionicons name={icon} size={24} color={danger ? '#FF6B6B' : '#FFFFFF'} />
-    <Text style={[styles.toolBtnText, danger && { color: '#FF6B6B' }]} numberOfLines={1}>
+    <Text style={[styles.toolBtnText, danger && { color: '#FF6B6B' }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
       {label}
     </Text>
   </TouchableOpacity>
@@ -629,12 +629,12 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   saveBtn: {
-    width: 56,
+    width: 52,
     height: 44,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 4,
+    marginLeft: 6,
   },
   previewContainer: {
     flex: 1,
@@ -799,17 +799,19 @@ const styles = StyleSheet.create({
   },
   toolbar: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
     alignItems: 'center',
     backgroundColor: EDITOR.panel,
     paddingTop: 10,
+    paddingLeft: 4,
+    paddingRight: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#2C3038',
   },
+  // Tools share the width equally, so the bar never overflows on narrow phones
   toolBtn: {
+    flex: 1,
     alignItems: 'center',
     gap: 4,
-    minWidth: 56,
     paddingVertical: 2,
   },
   toolBtnDisabled: {

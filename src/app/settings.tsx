@@ -20,14 +20,12 @@ import { useThemeColors } from '@/core/theme/colors';
 export default function SettingsScreen() {
   const colors = useThemeColors();
   const {
-    language,
     theme,
     default_filter,
     default_page_size,
     default_quality,
     app_lock_enabled,
     auto_save_to_gallery,
-    setLanguage,
     setTheme,
     setDefaultFilter,
     setDefaultPageSize,
@@ -66,40 +64,6 @@ export default function SettingsScreen() {
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={styles.content}
     >
-      {/* Language Section (FR-70) */}
-      <View style={styles.section}>
-        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{t('language')}</Text>
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <TouchableOpacity
-            style={styles.rowItem}
-            onPress={() => setLanguage('bn')}
-          >
-            <View style={styles.rowLeft}>
-              <Text style={styles.flag}>🇧🇩</Text>
-              <Text style={[styles.rowLabel, { color: colors.text }]}>বাংলা (Bengali)</Text>
-            </View>
-            {language === 'bn' && (
-              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
-            )}
-          </TouchableOpacity>
-
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
-          <TouchableOpacity
-            style={styles.rowItem}
-            onPress={() => setLanguage('en')}
-          >
-            <View style={styles.rowLeft}>
-              <Text style={styles.flag}>🇺🇸</Text>
-              <Text style={[styles.rowLabel, { color: colors.text }]}>English</Text>
-            </View>
-            {language === 'en' && (
-              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
-
       {/* Theme Section (FR-72) */}
       <View style={styles.section}>
         <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{t('theme')}</Text>
@@ -391,10 +355,6 @@ const styles = StyleSheet.create({
   rowLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  flag: {
-    fontSize: 20,
-    marginRight: 12,
   },
   rowLabel: {
     fontSize: 16,

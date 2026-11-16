@@ -17,7 +17,7 @@ interface Row {
 export default function MeScreen() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
-  const { t, language, theme, app_lock_enabled } = useSettingsStore();
+  const { t, theme, app_lock_enabled } = useSettingsStore();
 
   const openSettings = () => router.push('/settings');
 
@@ -28,7 +28,6 @@ export default function MeScreen() {
   ];
 
   const rows: Row[] = [
-    { key: 'lang', label: 'language', icon: 'language-outline', onPress: openSettings, value: language === 'bn' ? 'বাংলা' : 'English' },
     {
       key: 'theme',
       label: 'theme',

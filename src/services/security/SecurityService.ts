@@ -139,7 +139,7 @@ export class SecurityService {
     };
   }
 
-  static async authenticateWithBiometrics(prompt: string = 'ডকুমেন্ট স্ক্যানার আনলক করুন'): Promise<boolean> {
+  static async authenticateWithBiometrics(prompt: string = 'Unlock Doc Scanner'): Promise<boolean> {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
@@ -149,7 +149,7 @@ export class SecurityService {
 
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage: prompt,
-      fallbackLabel: 'পিন ব্যবহার করুন',
+      fallbackLabel: 'Use PIN',
       disableDeviceFallback: false,
     });
 

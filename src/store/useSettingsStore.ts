@@ -1,12 +1,11 @@
 import { create } from 'zustand';
-import { AppLanguage, AppSettings, AppTheme, PageFilter, PdfPageSize, PdfQuality } from '@/core/types';
+import { AppSettings, AppTheme, PageFilter, PdfPageSize, PdfQuality } from '@/core/types';
 import { translations, TranslationKey } from '@/i18n';
 import { SecurityService } from '@/services/security/SecurityService';
 import { DatabaseService } from '@/services/database/DatabaseService';
 
 interface SettingsState extends AppSettings {
   isAuthenticated: boolean;
-  setLanguage: (lang: AppLanguage) => void;
   setTheme: (theme: AppTheme) => void;
   setDefaultFilter: (filter: PageFilter) => void;
   setDefaultPageSize: (size: PdfPageSize) => void;
@@ -19,7 +18,6 @@ interface SettingsState extends AppSettings {
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  language: 'en', // English by default
   theme: 'light',
   default_filter: 'magic',
   default_page_size: 'A4',
@@ -29,10 +27,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   auto_save_to_gallery: false,
   isAuthenticated: true, // Will be checked on startup if lock is enabled
 
-  setLanguage: (language) => {
-    set({ language });
-    DatabaseService.setSetting('language', language).catch(console.warn);
-  },
   setTheme: (theme) => {
     set({ theme });
     DatabaseService.setSetting('theme', theme).catch(console.warn);
@@ -62,9 +56,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setIsAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
 
   t: (key: TranslationKey) => {
-    const lang = get().language;
-    const dict = translations[lang] || translations.bn;
-    return dict[key] || translations.en[key] || String(key);
+    // The app is English only
+    return translations.en[key] || String(key);
   },
 
   initSettings: async () => {
@@ -75,7 +68,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({
         app_lock_enabled: lockEnabled,
         isAuthenticated: !lockEnabled,
-        language: (settings.language as AppLanguage) || 'en',
         theme: (settings.theme as AppTheme) || 'light',
         default_filter: (settings.default_filter as PageFilter) || 'magic',
         default_page_size: (settings.default_page_size as PdfPageSize) || 'A4',
