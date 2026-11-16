@@ -135,6 +135,7 @@ export const translations = {
     applyEditsToAll: 'সব পাতায় প্রয়োগ করুন',
     pagesLabel: 'পাতা',
     moveShort: 'সরান',
+    dragToReorder: 'পাতার ক্রম বদলাতে চেপে ধরে টেনে নিন',
   },
   en: {
     // Navigation & Headers
@@ -272,6 +273,7 @@ export const translations = {
     applyEditsToAll: 'Apply edits to all pages',
     pagesLabel: 'pages',
     moveShort: 'Move',
+    dragToReorder: 'Press and hold a page, then drag to reorder',
   }
 };
 

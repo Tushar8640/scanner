@@ -9,7 +9,7 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
-  FlatList,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -18,18 +18,21 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Document, Page, PdfPageSize, PdfQuality } from '@/core/types';
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { PdfService } from '@/services/pdf/PdfService';
+import { StorageService } from '@/services/storage/StorageService';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { ActionButton } from '@/ui/components/ActionButton';
 import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { ActionSheet, ActionSheetItem } from '@/ui/components/ActionSheet';
+import { DraggableGrid, moveItem } from '@/ui/components/DraggableGrid';
+import { ImageService } from '@/services/image/ImageService';
 import { useThemeColors } from '@/core/theme/colors';
 
 export default function DocumentDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  const { updateTitle, softDelete, moveToFolder, folders } = useDocumentStore();
+  const { updateTitle, softDelete, moveToFolder, folders, loadAll } = useDocumentStore();
   const { default_page_size, default_quality, t } = useSettingsStore();
 
   const [document, setDocument] = useState<Document | null>(null);
@@ -50,6 +53,9 @@ export default function DocumentDetailScreen() {
   const [moveModalVisible, setMoveModalVisible] = useState(false);
   const [moreSheetVisible, setMoreSheetVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [gridDragging, setGridDragging] = useState(false);
+  const { width: windowWidth } = useWindowDimensions();
+  const cellWidth = (windowWidth - GRID_PADDING * 2 - GRID_GAP) / 2;
 
   useEffect(() => {
     let isMounted = true;
@@ -163,6 +169,41 @@ export default function DocumentDetailScreen() {
     }
   };
 
+  // Drag-to-reorder pages; saves the new order, marks the old PDF as stale and
+  // refreshes the cover thumbnail when the first page changes.
+  const handleReorderPages = async (from: number, to: number) => {
+    if (!document) return;
+    const previous = pages;
+    const reordered = moveItem(pages, from, to).map((p, i) => ({ ...p, position: i }));
+    setPages(reordered);
+    try {
+      for (const p of reordered) {
+        const old = previous.find((o) => o.id === p.id);
+        if (old && old.position !== p.position) {
+          await DatabaseService.updatePage(p.id, { position: p.position });
+        }
+      }
+      const updates: Partial<Document> = { pdf_path: null, updated_at: Date.now() };
+      if (reordered[0].id !== previous[0]?.id) {
+        const thumb = await ImageService.generateThumbnail(reordered[0].processed_path || reordered[0].original_path);
+        // New file name so cached images of the old cover are not reused
+        const thumbPath = `${StorageService.getDocumentDir(document.id)}thumb_${Date.now()}.jpg`;
+        await FileSystem.copyAsync({ from: thumb, to: thumbPath });
+        if (document.thumbnail_path && document.thumbnail_path !== thumbPath) {
+          await FileSystem.deleteAsync(document.thumbnail_path, { idempotent: true });
+        }
+        updates.thumbnail_path = thumbPath;
+      }
+      await DatabaseService.updateDocument(document.id, updates);
+      setDocument((prev) => (prev ? { ...prev, ...updates } : null));
+      loadAll().catch(() => undefined);
+    } catch (e: any) {
+      console.warn('Reorder failed:', e);
+      setPages(previous);
+      Alert.alert(t('error'), e.message || 'Failed to reorder pages');
+    }
+  };
+
   const handleSaveRename = async () => {
     if (!document) return;
     if (titleInput.trim().length === 0) {
@@ -240,18 +281,20 @@ export default function DocumentDetailScreen() {
       </View>
 
       {/* Page grid */}
-      <FlatList
-        data={pages}
-        keyExtractor={(p) => p.id}
-        numColumns={2}
-        columnWrapperStyle={styles.gridRow}
-        contentContainerStyle={styles.gridContent}
-        renderItem={({ item, index }) => (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={[styles.pageCell, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => setViewerIndex(index)}
-          >
+      <ScrollView contentContainerStyle={styles.gridContent} scrollEnabled={!gridDragging}>
+        <Text style={[styles.dragHint, { color: colors.textSecondary }]}>{t('dragToReorder')}</Text>
+        <DraggableGrid
+          data={pages}
+          keyExtractor={(p) => p.id}
+          columns={2}
+          cellWidth={cellWidth}
+          cellHeight={cellWidth * (4 / 3)}
+          gap={GRID_GAP}
+          onReorder={handleReorderPages}
+          onPressItem={setViewerIndex}
+          onDragActiveChange={setGridDragging}
+          renderItem={(item, index) => (
+          <View style={[styles.pageCell, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.pageCellInner} pointerEvents="none">
               <DocumentPageView
                 uri={item.processed_path || item.original_path}
@@ -264,9 +307,10 @@ export default function DocumentDetailScreen() {
             <View style={[styles.pageNum, { backgroundColor: colors.primary }]}>
               <Text style={styles.pageNumText}>{index + 1}</Text>
             </View>
-          </TouchableOpacity>
-        )}
-      />
+          </View>
+          )}
+        />
+      </ScrollView>
 
       {/* Bottom toolbar */}
       <View
@@ -474,6 +518,9 @@ const BarButton: React.FC<{
   </TouchableOpacity>
 );
 
+const GRID_PADDING = 12;
+const GRID_GAP = 12;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -518,17 +565,15 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   gridContent: {
-    padding: 10,
+    padding: GRID_PADDING,
     paddingBottom: 100,
   },
-  gridRow: {
-    gap: 10,
-    marginBottom: 10,
+  dragHint: {
+    fontSize: 12,
+    marginBottom: 8,
   },
   pageCell: {
     flex: 1,
-    maxWidth: '50%',
-    aspectRatio: 3 / 4,
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',

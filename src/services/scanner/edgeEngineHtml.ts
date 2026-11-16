@@ -21,7 +21,7 @@
 const ENGINE_JS = String.raw`
 (function () {
   'use strict';
-  var DETECT_MAX = 480;
+  var DETECT_MAX = 640;
   var WARP_SRC_MAX = 3000;
   var WARP_OUT_MAX = 2600;
   var cache = { key: null, img: null };
@@ -361,49 +361,290 @@ const ENGINE_JS = String.raw`
     });
   }
 
-  function detect(img) {
-    var W0 = img.naturalWidth, H0 = img.naturalHeight;
-    var sc = Math.min(1, DETECT_MAX / Math.max(W0, H0));
-    var w = Math.max(8, Math.round(W0 * sc)), h = Math.max(8, Math.round(H0 * sc)), n = w * h;
-    var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-    var ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
-    var d = ctx.getImageData(0, 0, w, h).data, gray = new Float32Array(n), i;
-    for (i = 0; i < n; i++) gray[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
-    gray = boxBlur(boxBlur(gray, w, h, 2), w, h, 2);
-    var G = sobel(gray, w, h);
-    var thr = Math.max(40, percentile(G.mag, n, 0.85));
-    // Paper edges on a similar-coloured desk are much weaker than text strokes,
-    // so side snapping and scoring use a lower threshold than the edge mask.
-    var sideThr = Math.max(12, thr * 0.3);
+  function dims(img) {
+    return { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
+  }
 
-    var cands = [], t = otsu(gray, n);
-    var bright = new Uint8Array(n), dark = new Uint8Array(n), edges = new Uint8Array(n);
-    for (i = 0; i < n; i++) { bright[i] = gray[i] > t ? 1 : 0; dark[i] = bright[i] ? 0 : 1; edges[i] = G.mag[i] > thr ? 1 : 0; }
+  // Gradients from luminance plus two opponent colour channels, so a coloured page on a
+  // table of the same brightness still produces edges. Per pixel the strongest channel wins.
+  function colourGradients(d, w, h) {
+    var n = w * h, L = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n), i;
+    for (i = 0; i < n; i++) {
+      var r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+      L[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+      A[i] = r - g;
+      B[i] = (r + g) * 0.5 - b;
+    }
+    L = boxBlur(boxBlur(L, w, h, 1), w, h, 1);
+    A = boxBlur(boxBlur(A, w, h, 1), w, h, 1);
+    B = boxBlur(boxBlur(B, w, h, 1), w, h, 1);
+    var GL = sobel(L, w, h), GA = sobel(A, w, h), GB = sobel(B, w, h);
+    for (i = 0; i < n; i++) {
+      var ma = GA.mag[i] * 0.8, mb = GB.mag[i] * 0.8;
+      if (ma > GL.mag[i] && ma >= mb) { GL.gx[i] = GA.gx[i] * 0.8; GL.gy[i] = GA.gy[i] * 0.8; GL.mag[i] = ma; }
+      else if (mb > GL.mag[i]) { GL.gx[i] = GB.gx[i] * 0.8; GL.gy[i] = GB.gy[i] * 0.8; GL.mag[i] = mb; }
+    }
+    return { G: GL, gray: L, chans: [L, A, B] };
+  }
+
+  // Canny: non-maximum suppression along the gradient, then hysteresis.
+  function canny(G, w, h, hi, lo) {
+    var n = w * h, nms = new Float32Array(n), edges = new Uint8Array(n), stack = new Int32Array(n), top = 0;
+    for (var y = 1; y < h - 1; y++) {
+      for (var x = 1; x < w - 1; x++) {
+        var i = y * w + x, m = G.mag[i];
+        if (m < lo) continue;
+        var gx = G.gx[i], gy = G.gy[i], ax = Math.abs(gx), ay = Math.abs(gy), n1, n2;
+        if (ay <= ax * 0.4142) { n1 = i - 1; n2 = i + 1; }
+        else if (ay >= ax * 2.4142) { n1 = i - w; n2 = i + w; }
+        else if (gx * gy > 0) { n1 = i - w - 1; n2 = i + w + 1; }
+        else { n1 = i - w + 1; n2 = i + w - 1; }
+        if (m >= G.mag[n1] && m > G.mag[n2]) nms[i] = m;
+      }
+    }
+    for (var s = 0; s < n; s++) if (nms[s] >= hi && !edges[s]) { edges[s] = 1; stack[top++] = s; }
+    while (top > 0) {
+      var p = stack[--top], px = p % w, py = (p - px) / w;
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+        var qx = px + dx, qy = py + dy;
+        if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue;
+        var q = qy * w + qx;
+        if (!edges[q] && nms[q] >= lo) { edges[q] = 1; stack[top++] = q; }
+      }
+    }
+    return edges;
+  }
+
+  // Hough transform; each edge pixel only votes for line angles near its own gradient direction.
+  function houghLines(edges, G, w, h, maxLines) {
+    var nT = 180, diag = Math.ceil(Math.sqrt(w * w + h * h)), nR = 2 * diag + 1;
+    var cosT = new Float32Array(nT), sinT = new Float32Array(nT), t, i;
+    for (t = 0; t < nT; t++) { cosT[t] = Math.cos(t * Math.PI / nT); sinT[t] = Math.sin(t * Math.PI / nT); }
+    var acc = new Float32Array(nT * nR);
+    for (i = 0; i < w * h; i++) {
+      if (!edges[i]) continue;
+      var x = i % w, y = (i - x) / w;
+      var phi = Math.atan2(G.gy[i], G.gx[i]); if (phi < 0) phi += Math.PI;
+      var t0 = Math.round(phi * nT / Math.PI);
+      for (var dt = -6; dt <= 6; dt++) {
+        var tt = t0 + dt;
+        if (tt < 0) tt += nT; else if (tt >= nT) tt -= nT;
+        var r = Math.round(x * cosT[tt] + y * sinT[tt]);
+        acc[tt * nR + r + diag] += 1;
+      }
+    }
+    var minVotes = Math.max(20, 0.1 * Math.min(w, h)), peaks = [];
+    for (t = 0; t < nT; t++) {
+      for (var rr = 1; rr < nR - 1; rr++) {
+        var v = acc[t * nR + rr];
+        if (v < minVotes) continue;
+        var isMax = true;
+        for (var a = -2; a <= 2 && isMax; a++) for (var b = -2; b <= 2; b++) {
+          if (!a && !b) continue;
+          var ta = t + a, rb = rr + b;
+          if (ta < 0 || ta >= nT || rb < 0 || rb >= nR) continue;
+          if (acc[ta * nR + rb] > v) { isMax = false; break; }
+        }
+        if (isMax) peaks.push({ t: t, r: rr - diag, v: v });
+      }
+    }
+    peaks.sort(function (p, q) { return q.v - p.v; });
+    var kept = [];
+    for (i = 0; i < peaks.length && kept.length < maxLines; i++) {
+      var p = peaks[i], dup = false;
+      for (var k = 0; k < kept.length && !dup; k++) {
+        var o = kept[k], dT = Math.abs(p.t - o.t);
+        if (dT <= 4 && Math.abs(p.r - o.r) <= 10) dup = true;
+        if (nT - dT <= 4 && Math.abs(p.r + o.r) <= 10) dup = true;
+      }
+      if (!dup) kept.push(p);
+    }
+    return kept.map(function (p) {
+      var th = p.t * Math.PI / nT;
+      return { nx: Math.cos(th), ny: Math.sin(th), c: p.r, theta: th, votes: p.v };
+    });
+  }
+
+  function angleBetween(a, b) {
+    var d = Math.abs(a.theta - b.theta);
+    return Math.min(d, Math.PI - d);
+  }
+
+  function interiorAnglesOk(q) {
+    for (var i = 0; i < 4; i++) {
+      var p = q[(i + 3) % 4], c = q[i], n = q[(i + 1) % 4];
+      var ax = p.x - c.x, ay = p.y - c.y, bx = n.x - c.x, by = n.y - c.y;
+      var cos = (ax * bx + ay * by) / ((Math.sqrt(ax * ax + ay * ay) * Math.sqrt(bx * bx + by * by)) || 1);
+      if (cos > 0.77 || cos < -0.77) return false; // outside roughly 40..140 degrees
+    }
+    return true;
+  }
+
+  // Builds quads from two roughly parallel line pairs that cross each other.
+  function quadsFromLines(lines, w, h, out) {
+    var pairs = [], i, j, minSep = 0.12 * Math.min(w, h), cx = w / 2, cy = h / 2;
+    for (i = 0; i < lines.length; i++) {
+      for (j = i + 1; j < lines.length; j++) {
+        if (angleBetween(lines[i], lines[j]) > 0.45) continue;
+        var di = lines[i].nx * cx + lines[i].ny * cy - lines[i].c;
+        var dj = lines[j].nx * cx + lines[j].ny * cy - lines[j].c;
+        var same = lines[i].nx * lines[j].nx + lines[i].ny * lines[j].ny > 0 ? 1 : -1;
+        if (Math.abs(di - same * dj) < minSep) continue;
+        pairs.push([lines[i], lines[j]]);
+      }
+    }
+    // Keep the strongest pairs only, so patterned backgrounds cannot explode the search
+    pairs.sort(function (p, q2) { return q2[0].votes + q2[1].votes - p[0].votes - p[1].votes; });
+    if (pairs.length > 320) pairs.length = 320;
+    var tolX = 0.12 * w, tolY = 0.12 * h, minArea = 0.08 * w * h;
+    for (i = 0; i < pairs.length; i++) {
+      for (j = i + 1; j < pairs.length; j++) {
+        var A = pairs[i], B = pairs[j];
+        if (A[0] === B[0] || A[0] === B[1] || A[1] === B[0] || A[1] === B[1]) continue;
+        if (angleBetween(A[0], B[0]) < 0.7) continue;
+        var p1 = intersect(A[0], B[0]), p2 = intersect(A[0], B[1]), p3 = intersect(A[1], B[1]), p4 = intersect(A[1], B[0]);
+        if (!p1 || !p2 || !p3 || !p4) continue;
+        var q = [p1, p2, p3, p4], bad = false;
+        for (var k = 0; k < 4; k++) {
+          if (q[k].x < -tolX || q[k].y < -tolY || q[k].x > w + tolX || q[k].y > h + tolY) { bad = true; break; }
+        }
+        if (bad) continue;
+        q = orderQuad(q);
+        if (!isConvex(q) || polyArea(q) < minArea || !interiorAnglesOk(q)) continue;
+        out.push({ quad: q, source: 'lines' });
+      }
+    }
+  }
+
+  // Scores how much a quad looks like a real document outline.
+  // chans: [luminance, red-green, yellow-blue] blurred channels.
+  function scoreQuad(q, G, edges, chans, w, h) {
+    var cx = 0, cy = 0, s, k, ch;
+    for (k = 0; k < 4; k++) { cx += q[k].x / 4; cy += q[k].y / 4; }
+    var sides = [], cohs = [];
+    for (s = 0; s < 4; s++) {
+      var a = q[s], b = q[(s + 1) % 4], nm = sideNormal(a, b);
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      var inward = nm.nx * (cx - mx) + nm.ny * (cy - my) > 0 ? 1 : -1;
+      var hits = 0, total = 0, diffN = 0, dSum = [0, 0, 0], dAbs = [0, 0, 0];
+      for (k = 0; k < 40; k++) {
+        var t = 0.05 + 0.9 * k / 39, px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t;
+        if (px < 2 || py < 2 || px > w - 3 || py > h - 3) continue;
+        total++;
+        for (var o = -2; o <= 2; o++) {
+          var xi = Math.round(px + nm.nx * o), yi = Math.round(py + nm.ny * o);
+          if (xi < 0 || yi < 0 || xi >= w || yi >= h) continue;
+          var i = yi * w + xi;
+          if (!edges[i]) continue;
+          var align = Math.abs(G.gx[i] * nm.nx + G.gy[i] * nm.ny) / (G.mag[i] || 1);
+          if (align > 0.85) { hits++; break; }
+        }
+        var ix = Math.round(px + nm.nx * inward * 4), iy = Math.round(py + nm.ny * inward * 4);
+        var ox = Math.round(px - nm.nx * inward * 4), oy = Math.round(py - nm.ny * inward * 4);
+        if (ix >= 0 && iy >= 0 && ix < w && iy < h && ox >= 0 && oy >= 0 && ox < w && oy < h) {
+          for (ch = 0; ch < 3; ch++) {
+            var df = chans[ch][iy * w + ix] - chans[ch][oy * w + ox];
+            dSum[ch] += df; dAbs[ch] += Math.abs(df);
+          }
+          diffN++;
+        }
+      }
+      // A side mostly outside the frame (document cut off) is treated as neutral
+      sides.push(total >= 8 ? hits / total : 0.5);
+      // Coherence: a real page edge keeps the same inside/outside contrast along its whole
+      // length, while lines in a patterned background alternate. Best channel counts.
+      var coh = 0;
+      if (diffN >= 8) {
+        for (ch = 0; ch < 3; ch++) {
+          if (dAbs[ch] / diffN < 4) continue;
+          coh = Math.max(coh, Math.abs(dSum[ch]) / dAbs[ch]);
+        }
+      } else {
+        coh = 0.7;
+      }
+      cohs.push(coh);
+    }
+    var mean = (sides[0] + sides[1] + sides[2] + sides[3]) / 4;
+    var minSide = Math.min(sides[0], sides[1], sides[2], sides[3]);
+    var cohMean = (cohs[0] + cohs[1] + cohs[2] + cohs[3]) / 4;
+    var areaFrac = polyArea(clipQuad(q, w, h)) / (w * h);
+    return {
+      support: mean,
+      minSide: minSide,
+      score: mean * (0.4 + 0.6 * minSide) * Math.sqrt(areaFrac) * (0.25 + 0.75 * cohMean * cohMean),
+    };
+  }
+
+  function clipQuad(q, w, h) {
+    return q.map(function (p) { return { x: Math.max(0, Math.min(w - 1, p.x)), y: Math.max(0, Math.min(h - 1, p.y)) }; });
+  }
+
+  function detect(img) {
+    var D = dims(img);
+    var sc = Math.min(1, DETECT_MAX / Math.max(D.w, D.h));
+    var w = Math.max(8, Math.round(D.w * sc)), h = Math.max(8, Math.round(D.h * sc)), n = w * h, i;
+    var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    var ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, w, h);
+    var d = ctx.getImageData(0, 0, w, h).data;
+    var CG = colourGradients(d, w, h), G = CG.G, gray = CG.gray, chans = CG.chans;
+
+    var hi = Math.max(16, percentile(G.mag, n, 0.9) * 0.3), lo = hi * 0.5;
+    var edges = canny(G, w, h, hi, lo);
+    // Paper edges on a similar-coloured desk are much weaker than text strokes,
+    // so side snapping uses a lower threshold than the edge detector.
+    var sideThr = Math.max(10, lo * 0.6);
+
+    var cands = [];
+    quadsFromLines(houghLines(edges, G, w, h, 48), w, h, cands);
+
+    // Region-based candidates (bright / dark / closed-edge blobs) cover curled or torn pages
+    var t = otsu(gray, n), bright = new Uint8Array(n), dark = new Uint8Array(n);
+    for (i = 0; i < n; i++) { bright[i] = gray[i] > t ? 1 : 0; dark[i] = bright[i] ? 0 : 1; }
     candidatesFromMask(closeOpen(bright, w, h, 2, 3), w, h, cands);
     candidatesFromMask(closeOpen(dark, w, h, 2, 3), w, h, cands);
-    var edgeFilled = fillHoles(morph(edges, w, h, 1, true), w, h);
+    var edgeFilled = fillHoles(morph(edges, w, h, 2, true), w, h);
     candidatesFromMask(morph(morph(edgeFilled, w, h, 3, false), w, h, 3, true), w, h, cands);
 
-    var diag = Math.sqrt(w * w + h * h), best = null, bestScore = 0;
+    var scored = [];
     cands.forEach(function (c) {
-      var q = refineQuad(c.quad, G, w, h, sideThr, Math.max(4, Math.round(diag * 0.03)));
-      q = refineQuad(q, G, w, h, sideThr, 3);
-      if (!isConvex(q)) return;
-      var areaFrac = polyArea(q) / n;
-      if (areaFrac < 0.1) return;
-      var support = edgeSupport(q, G, w, h, sideThr);
-      if (support < 0.35) return;
-      var score = support * (0.6 + 0.4 * areaFrac) * (1 - 0.5 * c.borderFrac);
-      if (score > bestScore) { bestScore = score; best = q; }
+      var sc0 = scoreQuad(c.quad, G, edges, chans, w, h);
+      if (sc0.support >= 0.3) scored.push({ quad: c.quad, s: sc0 });
+    });
+    scored.sort(function (a, b) { return b.s.score - a.s.score; });
+
+    // Sub-pixel refinement of the best few; keep a refinement only if it does not hurt the score
+    var best = null, bestScore = 0, diag = Math.sqrt(w * w + h * h);
+    scored.slice(0, 6).forEach(function (c) {
+      var q = c.quad, s = c.s;
+      var r = refineQuad(q, G, w, h, sideThr, Math.max(3, Math.round(diag * 0.012)));
+      r = refineQuad(r, G, w, h, sideThr, 2);
+      if (isConvex(r)) {
+        var rs = scoreQuad(r, G, edges, chans, w, h);
+        if (rs.score >= s.score * 0.97) { q = r; s = rs; }
+      }
+      if (s.support >= 0.45 && s.minSide >= 0.2 && s.score > bestScore) { bestScore = s.score; best = q; }
     });
 
     return {
-      width: W0,
-      height: H0,
+      width: D.w,
+      height: D.h,
       corners: best ? orderQuad(best).map(function (p) {
         return { x: Math.max(0, Math.min(1, (p.x + 0.5) / w)), y: Math.max(0, Math.min(1, (p.y + 0.5) / h)) };
       }) : null,
     };
+  }
+
+  // Bakes EXIF orientation into the pixels and caps the size, so React Native and the
+  // engine see the same image. Returns the normalised JPEG plus the detected corners.
+  function prepare(img, alias) {
+    var D = dims(img), sc = Math.min(1, WARP_SRC_MAX / Math.max(D.w, D.h));
+    var w = Math.round(D.w * sc), h = Math.round(D.h * sc);
+    var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    var ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, w, h);
+    var url = cv.toDataURL('image/jpeg', 0.93);
+    cache.key = alias; cache.img = cv;
+    var det = detect(cv);
+    return { b64: url.substring(url.indexOf(',') + 1), width: w, height: h, corners: det.corners };
   }
 
   /* ---------------- perspective warp ---------------- */
@@ -438,7 +679,7 @@ const ENGINE_JS = String.raw`
   function dist(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
 
   function warp(img, corners) {
-    var W0 = img.naturalWidth, H0 = img.naturalHeight;
+    var D0 = dims(img), W0 = D0.w, H0 = D0.h;
     var sc = Math.min(1, WARP_SRC_MAX / Math.max(W0, H0));
     var sw = Math.round(W0 * sc), sh = Math.round(H0 * sc);
     var cv = document.createElement('canvas'); cv.width = sw; cv.height = sh;
@@ -485,6 +726,7 @@ const ENGINE_JS = String.raw`
   window.__scan = function (req) {
     getImage(req).then(function (img) {
       if (req.op === 'detect') return detect(img);
+      if (req.op === 'prepare') return prepare(img, req.alias);
       if (req.op === 'warp') return warp(img, req.corners);
       throw new Error('Unknown operation: ' + req.op);
     }).then(function (result) {

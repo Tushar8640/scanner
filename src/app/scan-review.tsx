@@ -20,6 +20,7 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { scannerService } from '@/services/scanner/ScannerService';
 import { DocumentPageView } from '@/ui/components/DocumentPageView';
 import { CropModal } from '@/ui/components/CropModal';
+import { DraggableGrid, moveItem } from '@/ui/components/DraggableGrid';
 import { ScanEngineProvider, useScanEngine } from '@/ui/components/ScanEngine';
 import { Quad, isFullQuad } from '@/services/scanner/quad';
 import { IntensitySlider } from '@/ui/components/IntensitySlider';
@@ -92,6 +93,7 @@ function ScanReviewContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [cropModalVisible, setCropModalVisible] = useState(false);
   const [applyToAll, setApplyToAll] = useState(false);
+  const [stripDragging, setStripDragging] = useState(false);
 
   const currentPage = pages[currentPageIndex];
   const engine = useScanEngine();
@@ -108,10 +110,12 @@ function ScanReviewContent() {
     (async () => {
       let update: Partial<EditablePage> = { cropState: 'done' };
       try {
-        const detected = await engine.detect(next.sourceUri);
-        if (detected.corners && !isFullQuad(detected.corners)) {
-          const croppedUri = await engine.warp(next.sourceUri, detected.corners);
-          update = { ...update, corners: detected.corners, originalUri: croppedUri, previewUri: croppedUri };
+        // prepare() also fixes EXIF rotation, so the crop screen and the engine agree on orientation
+        const prepared = await engine.prepare(next.sourceUri);
+        update = { ...update, sourceUri: prepared.uri, originalUri: prepared.uri, previewUri: prepared.uri };
+        if (prepared.corners && !isFullQuad(prepared.corners)) {
+          const croppedUri = await engine.warp(prepared.uri, prepared.corners);
+          update = { ...update, corners: prepared.corners, originalUri: croppedUri, previewUri: croppedUri };
         }
       } catch (e) {
         console.warn('Auto crop failed, keeping the full image:', e);
@@ -120,6 +124,17 @@ function ScanReviewContent() {
       setPages((prev) => prev.map((p) => (p.id === next.id ? { ...p, ...update } : p)));
     })();
   }, [pages, engine]);
+
+  // Drag-to-reorder from the page strip; the selected page stays selected
+  const handleReorder = (from: number, to: number) => {
+    setPages((prev) => moveItem(prev, from, to));
+    setCurrentPageIndex((cur) => {
+      if (cur === from) return to;
+      if (from < cur && to >= cur) return cur - 1;
+      if (from > cur && to <= cur) return cur + 1;
+      return cur;
+    });
+  };
 
   // Rotate current page by 90 degrees instantly (FR-11)
   const handleRotate = () => {
@@ -353,24 +368,33 @@ function ScanReviewContent() {
         showsHorizontalScrollIndicator={false}
         style={styles.stripScroll}
         contentContainerStyle={styles.strip}
+        scrollEnabled={!stripDragging}
       >
-        {pages.map((p, idx) => (
-          <TouchableOpacity
-            key={p.id}
-            style={[styles.thumbWrapper, idx === currentPageIndex && { borderColor: colors.primary }]}
-            onPress={() => setCurrentPageIndex(idx)}
-          >
-            <Image source={{ uri: p.originalUri }} style={styles.thumbImg} />
-            {p.cropState === 'pending' && (
-              <View style={styles.thumbBusy}>
-                <ActivityIndicator size="small" color="#FFFFFF" />
+        {/* Long-press and drag a page to change its position */}
+        <DraggableGrid
+          data={pages}
+          keyExtractor={(p) => p.id}
+          columns={pages.length}
+          cellWidth={THUMB_W}
+          cellHeight={THUMB_H}
+          gap={8}
+          onReorder={handleReorder}
+          onPressItem={setCurrentPageIndex}
+          onDragActiveChange={setStripDragging}
+          renderItem={(p, idx) => (
+            <View style={[styles.thumbWrapper, idx === currentPageIndex && { borderColor: colors.primary }]}>
+              <Image source={{ uri: p.originalUri }} style={styles.thumbImg} />
+              {p.cropState === 'pending' && (
+                <View style={styles.thumbBusy}>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                </View>
+              )}
+              <View style={styles.thumbNum}>
+                <Text style={styles.thumbNumText}>{idx + 1}</Text>
               </View>
-            )}
-            <View style={styles.thumbNum}>
-              <Text style={styles.thumbNumText}>{idx + 1}</Text>
             </View>
-          </TouchableOpacity>
-        ))}
+          )}
+        />
         <TouchableOpacity style={styles.addThumbBtn} onPress={handleAddPage} accessibilityLabel={t('addPage')}>
           <Ionicons name="add" size={26} color="#FFFFFF" />
         </TouchableOpacity>
@@ -463,6 +487,9 @@ const ToolButton: React.FC<{
   </TouchableOpacity>
 );
 
+const THUMB_W = 50;
+const THUMB_H = 66;
+
 // The editor is always dark, like a camera app, regardless of the app theme
 const EDITOR = {
   background: '#0E1013',
@@ -550,8 +577,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   thumbWrapper: {
-    width: 44,
-    height: 58,
+    width: THUMB_W,
+    height: THUMB_H,
     borderRadius: 5,
     borderWidth: 2,
     borderColor: 'transparent',
@@ -582,8 +609,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   addThumbBtn: {
-    width: 44,
-    height: 58,
+    width: THUMB_W,
+    height: THUMB_H,
     borderRadius: 5,
     borderWidth: 1,
     borderStyle: 'dashed',

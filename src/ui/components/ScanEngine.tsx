@@ -12,8 +12,18 @@ export interface DetectResult {
   height: number;
 }
 
+export interface PrepareResult extends DetectResult {
+  /** Orientation-fixed, size-capped copy of the input. Use this as the page source from now on. */
+  uri: string;
+}
+
 export interface ScanEngineApi {
   detect(uri: string): Promise<DetectResult>;
+  /**
+   * Normalises a new capture (applies EXIF rotation, caps size) and detects its edges in one pass.
+   * React Native and the engine then see exactly the same pixels, so crop handles line up.
+   */
+  prepare(uri: string): Promise<PrepareResult>;
   /** Perspective-corrects the image to the given corners and returns a new file URI. */
   warp(uri: string, corners: Quad): Promise<string>;
 }
@@ -97,19 +107,25 @@ export function ScanEngineProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const run = useCallback(
-    <T,>(op: 'detect' | 'warp', uri: string, extra: Record<string, unknown> = {}): Promise<T> => {
+    <T,>(
+      op: 'detect' | 'warp' | 'prepare',
+      uri: string,
+      extra: Record<string, unknown> = {},
+      /** Key the engine caches the image under afterwards (prepare re-keys to its output file). */
+      cachedAs: string = uri
+    ): Promise<T> => {
       const task = async (): Promise<T> => {
         await readyRef.current.promise;
         const readB64 = () => FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         const b64 = loadedKeyRef.current === uri ? undefined : await readB64();
         try {
           const result = await call<T>({ op, key: uri, b64, ...extra });
-          loadedKeyRef.current = uri;
+          loadedKeyRef.current = cachedAs;
           return result;
         } catch (e: any) {
           if (e?.message !== 'NO_IMAGE') throw e;
           const result = await call<T>({ op, key: uri, b64: await readB64(), ...extra });
-          loadedKeyRef.current = uri;
+          loadedKeyRef.current = cachedAs;
           return result;
         }
       };
@@ -120,20 +136,28 @@ export function ScanEngineProvider({ children }: { children: React.ReactNode }) 
     [call]
   );
 
-  const api = useMemo<ScanEngineApi>(
-    () => ({
+  const api = useMemo<ScanEngineApi>(() => {
+    const newCacheFile = (prefix: string) => {
+      const dir = FileSystem.cacheDirectory;
+      if (!dir) throw new Error('Cache directory is not accessible');
+      return `${dir}${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+    };
+    return {
       detect: (uri) => run<DetectResult>('detect', uri),
+      prepare: async (uri) => {
+        const out = newCacheFile('scan_src');
+        const res = await run<DetectResult & { b64: string }>('prepare', uri, { alias: out }, out);
+        await FileSystem.writeAsStringAsync(out, res.b64, { encoding: FileSystem.EncodingType.Base64 });
+        return { uri: out, corners: res.corners, width: res.width, height: res.height };
+      },
       warp: async (uri, corners) => {
         const res = await run<{ b64: string }>('warp', uri, { corners });
-        const dir = FileSystem.cacheDirectory;
-        if (!dir) throw new Error('Cache directory is not accessible');
-        const out = `${dir}scan_crop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+        const out = newCacheFile('scan_crop');
         await FileSystem.writeAsStringAsync(out, res.b64, { encoding: FileSystem.EncodingType.Base64 });
         return out;
       },
-    }),
-    [run]
-  );
+    };
+  }, [run]);
 
   return (
     <ScanEngineContext.Provider value={api}>
