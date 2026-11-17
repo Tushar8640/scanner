@@ -1,5 +1,14 @@
-import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, RefreshControl } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Image,
+  RefreshControl,
+  BackHandler,
+} from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +20,9 @@ import { useScanActions } from '@/ui/hooks/useScanActions';
 import { ScanFab } from '@/ui/components/ScanFab';
 import { AdBanner } from '@/ui/components/AdBanner';
 import type { TranslationKey } from '@/i18n';
+import { useUiStore } from '@/store/useUiStore';
+import { ScanEngineProvider } from '@/ui/components/ScanEngine';
+import { DocSelectionBar } from '@/ui/components/DocSelectionBar';
 
 const RECENT_LIMIT = 10;
 
@@ -34,12 +46,30 @@ function openFiles(action: 'search' | 'newFolder' | 'select') {
 }
 
 export default function HomeScreen() {
+  // The scan engine renders pages with their filters for sharing, printing and saving
+  return (
+    <ScanEngineProvider>
+      <HomeContent />
+    </ScanEngineProvider>
+  );
+}
+
+function HomeContent() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   const { busy, scanWithCamera, importImages } = useScanActions();
   const [recents, setRecents] = useState<Document[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const setTabBarHidden = useUiStore((s) => s.setTabBarHidden);
+  // Long-press selection (like the reference app): null when not selecting; ids in tap order
+  const [selected, setSelected] = useState<string[] | null>(null);
+  const selecting = selected !== null;
+  // The finger lifting after a long press can arrive as a tap; ignore that one
+  const longPressAtRef = useRef(0);
+  const chosen = selected
+    ? recents.filter((d) => selected.includes(d.id)).sort((a, b) => selected.indexOf(a.id) - selected.indexOf(b.id))
+    : [];
 
   const loadRecents = useCallback(async () => {
     try {
@@ -55,8 +85,34 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       loadRecents();
+      // Leaving the tab ends selection, so the tab bar is never left hidden
+      return () => setSelected(null);
     }, [loadRecents])
   );
+
+  // The selection action bar takes the tab bar's place
+  useEffect(() => {
+    setTabBarHidden(selecting);
+    return () => setTabBarHidden(false);
+  }, [selecting, setTabBarHidden]);
+
+  // Android back leaves selection first
+  useEffect(() => {
+    if (!selecting) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSelected(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [selecting]);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => (prev?.includes(id) ? prev.filter((x) => x !== id) : [...(prev ?? []), id]));
+
+  const finish = async () => {
+    setSelected(null);
+    await loadRecents();
+  };
 
   const tools: QuickTool[] = [
     { key: 'scan', label: 'smartScan', icon: 'scan', tint: colors.primary, onPress: scanWithCamera },
@@ -104,7 +160,7 @@ export default function HomeScreen() {
         {/* Tool grid */}
         <View style={styles.grid}>
           {tools.map((tool) => (
-            <TouchableOpacity key={tool.key} style={styles.tool} onPress={tool.onPress} disabled={busy}>
+            <TouchableOpacity key={tool.key} style={styles.tool} onPress={tool.onPress} disabled={busy || selecting}>
               <View style={[styles.toolIcon, { backgroundColor: colors.surface }]}>
                 <Ionicons name={tool.icon} size={28} color={tool.tint} />
               </View>
@@ -140,41 +196,74 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            recents.map((doc) => (
-              <TouchableOpacity
-                key={doc.id}
-                style={styles.row}
-                activeOpacity={0.7}
-                onPress={() => router.push(`/document/${doc.id}`)}
-              >
-                <View style={[styles.thumb, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
-                  {doc.thumbnail_path ? (
-                    <Image source={{ uri: doc.thumbnail_path }} style={styles.thumbImg} />
-                  ) : (
-                    <Ionicons name="document-text-outline" size={24} color={colors.textMuted} />
-                  )}
-                </View>
-                <View style={styles.rowInfo}>
-                  <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
-                    {doc.title}
-                  </Text>
-                  <View style={styles.rowMeta}>
-                    <Text style={[styles.rowDate, { color: colors.textSecondary }]}>
-                      {formatDocDate(doc.updated_at || doc.created_at)}
+            recents.map((doc) => {
+              const isSel = !!selected?.includes(doc.id);
+              return (
+                <TouchableOpacity
+                  key={doc.id}
+                  style={[styles.row, isSel && { backgroundColor: colors.primaryLight }]}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (Date.now() - longPressAtRef.current < 700) return;
+                    if (selecting) toggle(doc.id);
+                    else router.push(`/document/${doc.id}`);
+                  }}
+                  // Long press starts selection with this document, like the reference app
+                  onLongPress={() => {
+                    longPressAtRef.current = Date.now();
+                    if (selecting) toggle(doc.id);
+                    else setSelected([doc.id]);
+                  }}
+                >
+                  <View style={[styles.thumb, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
+                    {doc.thumbnail_path ? (
+                      <Image source={{ uri: doc.thumbnail_path }} style={styles.thumbImg} />
+                    ) : (
+                      <Ionicons name="document-text-outline" size={24} color={colors.textMuted} />
+                    )}
+                  </View>
+                  <View style={styles.rowInfo}>
+                    <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
+                      {doc.title}
                     </Text>
-                    <View style={[styles.pagePill, { backgroundColor: colors.surfaceVariant }]}>
-                      <Ionicons name="documents-outline" size={11} color={colors.textSecondary} />
-                      <Text style={[styles.pagePillText, { color: colors.textSecondary }]}>{doc.page_count}</Text>
+                    <View style={styles.rowMeta}>
+                      <Text style={[styles.rowDate, { color: colors.textSecondary }]}>
+                        {formatDocDate(doc.updated_at || doc.created_at)}
+                      </Text>
+                      <View style={[styles.pagePill, { backgroundColor: colors.surfaceVariant }]}>
+                        <Ionicons name="documents-outline" size={11} color={colors.textSecondary} />
+                        <Text style={[styles.pagePillText, { color: colors.textSecondary }]}>{doc.page_count}</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-              </TouchableOpacity>
-            ))
+                  {selecting && (
+                    <Ionicons name={isSel ? 'checkbox' : 'square-outline'} size={26} color={isSel ? colors.primary : colors.textMuted} />
+                  )}
+                </TouchableOpacity>
+              );
+            })
           )}
         </View>
       </ScrollView>
 
-      <ScanFab />
+      {selecting && (
+        <View style={[styles.selectHeader, { paddingTop: insets.top + 8, backgroundColor: colors.background }]}>
+          <TouchableOpacity onPress={() => setSelected(null)} hitSlop={10} accessibilityLabel={t('cancel')}>
+            <Ionicons name="close" size={28} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.selectTitle, { color: colors.text }]}>
+            {t('selectedCount').replace('{n}', String(selected.length))}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setSelected(selected.length === recents.length ? [] : recents.map((d) => d.id))}
+            hitSlop={10}
+          >
+            <Text style={[styles.selectAll, { color: colors.primary }]}>{t('selectAll')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {selecting ? <DocSelectionBar docs={chosen} onDone={finish} /> : <ScanFab />}
     </View>
   );
 }
@@ -183,6 +272,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  selectHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+  },
+  selectTitle: { flex: 1, fontSize: 22, fontWeight: '500' },
+  selectAll: { fontSize: 17, fontWeight: '500' },
   scroll: {
     paddingBottom: 110,
   },

@@ -26,6 +26,8 @@ export interface GeneratePdfOptions {
   renderPage?: (page: Page) => Promise<string>;
   /** Smaller page images for a compressed copy. The result is a separate file; the saved PDF is untouched. */
   compression?: PdfCompression;
+  /** Write to a temporary file (e.g. several documents shared together) instead of the document's PDF. */
+  temp?: boolean;
 }
 
 export class PdfService {
@@ -223,8 +225,8 @@ export class PdfService {
     }
 
     // A compressed copy is a temporary file for sharing; it never replaces the document's PDF
-    if (options.compression) {
-      const out = `${FileSystem.cacheDirectory}compressed_${Date.now()}.pdf`;
+    if (options.compression || options.temp) {
+      const out = `${FileSystem.cacheDirectory}${options.compression ? 'compressed' : 'share'}_${Date.now()}.pdf`;
       await FileSystem.copyAsync({ from: printResult.uri, to: out });
       return out;
     }

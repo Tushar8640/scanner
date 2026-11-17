@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  BackHandler,
   View,
   Text,
   FlatList,
@@ -22,8 +23,10 @@ import { DocumentCard } from '@/ui/components/DocumentCard';
 import { ActionButton } from '@/ui/components/ActionButton';
 import { ActionSheet, ActionSheetItem } from '@/ui/components/ActionSheet';
 import { ScanFab } from '@/ui/components/ScanFab';
+import { ScanEngineProvider } from '@/ui/components/ScanEngine';
+import { DocSelectionBar } from '@/ui/components/DocSelectionBar';
+import { useUiStore } from '@/store/useUiStore';
 import { AdBanner } from '@/ui/components/AdBanner';
-import { PremiumService } from '@/services/monetization/PremiumService';
 import { useScanActions } from '@/ui/hooks/useScanActions';
 import { useThemeColors } from '@/core/theme/colors';
 import { Document, Folder } from '@/core/types';
@@ -31,6 +34,15 @@ import { Document, Folder } from '@/core/types';
 type ViewMode = 'list' | 'grid';
 
 export default function FilesScreen() {
+  // The scan engine renders pages with their filters for sharing, printing and saving
+  return (
+    <ScanEngineProvider>
+      <FilesContent />
+    </ScanEngineProvider>
+  );
+}
+
+function FilesContent() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const params = useLocalSearchParams<{ search?: string; newFolder?: string; select?: string; toolAction?: 'sign' | 'watermark' | 'pdf' }>();
@@ -50,7 +62,6 @@ export default function FilesScreen() {
     createFolder,
     deleteFolder,
     moveToFolder,
-    mergeDocuments,
   } = useDocumentStore();
   const { t } = useSettingsStore();
   const { busy, importImages } = useScanActions();
@@ -70,7 +81,6 @@ export default function FilesScreen() {
   const [selected, setSelected] = useState<string[]>([]);
   // Selection was opened from the Merge tool
   const [mergeIntent, setMergeIntent] = useState(false);
-  const [working, setWorking] = useState(false);
   const [activeToolAction, setActiveToolAction] = useState<'sign' | 'watermark' | 'pdf' | null>(null);
 
   // Deep links from Home: focus search, or open "Create Folder"
@@ -103,42 +113,26 @@ export default function FilesScreen() {
   // Selected ids in the order they were tapped, skipping any that are no longer listed
   const selectedInOrder = () => selected.filter((id) => documents.some((d) => d.id === id));
 
-  const handleMerge = async () => {
-    if (!PremiumService.require('merge')) return;
-    const ids = selectedInOrder();
-    if (ids.length < 2) {
-      Alert.alert(t('mergeDocs'), t('chooseDocsHint'));
-      return;
-    }
-    try {
-      setWorking(true);
-      const d = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const doc = await mergeDocuments(ids, `${t('mergedTitle')} ${pad(d.getDate())}-${pad(d.getMonth() + 1)} ${pad(d.getHours())}.${pad(d.getMinutes())}`);
+  // Selection actions (share, move/copy, rename, merge, delete, more) live in DocSelectionBar
+  const setTabBarHidden = useUiStore((st) => st.setTabBarHidden);
+  useEffect(() => {
+    setTabBarHidden(selectMode);
+    return () => setTabBarHidden(false);
+  }, [selectMode, setTabBarHidden]);
+  // Android back leaves selection first
+  useEffect(() => {
+    if (!selectMode) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       exitSelect();
-      router.push(`/document/${doc.id}`);
-    } catch (e: any) {
-      Alert.alert(t('error'), e?.message || 'Merge failed');
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  const handleDeleteSelected = () => {
-    const ids = selectedInOrder();
-    if (ids.length === 0) return;
-    Alert.alert(t('deleteConfirmTitle'), t('deleteSelectedConfirm').replace('{n}', String(ids.length)), [
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('delete'),
-        style: 'destructive',
-        onPress: async () => {
-          for (const id of ids) await softDelete(id);
-          exitSelect();
-        },
-      },
-    ]);
-  };
+      return true;
+    });
+    return () => sub.remove();
+  }, [selectMode]);
+  // The finger lifting after a long press can arrive as a tap; ignore that one
+  const longPressAtRef = useRef(0);
+  const chosenDocs = selectedInOrder()
+    .map((id) => documents.find((d) => d.id === id))
+    .filter(Boolean) as Document[];
 
   const activeFolder = folders.find((f) => f.id === activeFolderId) ?? null;
   const searching = searchQuery.trim().length > 0;
@@ -383,6 +377,7 @@ export default function FilesScreen() {
             selected={selected.includes(item.id)}
             selectionIndex={selected.includes(item.id) ? selected.indexOf(item.id) + 1 : undefined}
             onPress={() => {
+              if (Date.now() - longPressAtRef.current < 700) return;
               if (selectMode) {
                 toggleSelected(item.id);
                 return;
@@ -400,6 +395,16 @@ export default function FilesScreen() {
                 toggleSelected(item.id);
               } else {
                 setDocSheetTarget(item);
+              }
+            }}
+            // Long press starts selection with this document, like the reference app
+            onLongPress={() => {
+              longPressAtRef.current = Date.now();
+              if (selectMode) {
+                toggleSelected(item.id);
+              } else {
+                setSelectMode(true);
+                setSelected([item.id]);
               }
             }}
           />
@@ -421,23 +426,13 @@ export default function FilesScreen() {
       />
 
       {selectMode ? (
-        <View style={[styles.selectBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <SelectAction
-            icon="git-merge-outline"
-            label={selected.length >= 2 ? `${t('merge')} (${selected.length})` : t('merge')}
-            color={mergeIntent && selected.length >= 2 ? colors.primary : colors.text}
-            onPress={handleMerge}
-            disabled={working || selected.length < 2}
-          />
-          <SelectAction
-            icon="folder-outline"
-            label={t('moveShort')}
-            color={colors.text}
-            onPress={() => selected.length > 0 && setMoveIds(selectedInOrder())}
-            disabled={selected.length === 0}
-          />
-          <SelectAction icon="trash-outline" label={t('delete')} color={colors.danger} onPress={handleDeleteSelected} disabled={selected.length === 0} />
-        </View>
+        <DocSelectionBar
+          docs={chosenDocs}
+          onDone={() => {
+            exitSelect();
+            loadAll();
+          }}
+        />
       ) : (
         <ScanFab />
       )}
@@ -540,19 +535,6 @@ export default function FilesScreen() {
     </View>
   );
 }
-
-const SelectAction: React.FC<{
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  color: string;
-  disabled?: boolean;
-  onPress: () => void;
-}> = ({ icon, label, color, disabled, onPress }) => (
-  <TouchableOpacity style={[styles.selectAction, disabled && { opacity: 0.4 }]} onPress={onPress} disabled={disabled}>
-    <Ionicons name={icon} size={24} color={color} />
-    <Text style={[styles.selectActionText, { color }]}>{label}</Text>
-  </TouchableOpacity>
-);
 
 const styles = StyleSheet.create({
   selectTitle: {

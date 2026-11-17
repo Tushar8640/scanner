@@ -9,6 +9,8 @@ interface DocumentCardProps {
   variant?: 'list' | 'grid';
   onPress: () => void;
   onMore: () => void;
+  /** Long press; defaults to onMore. */
+  onLongPress?: () => void;
   /** Selection mode: shows a checkbox instead of the more button. */
   selectionMode?: boolean;
   selected?: boolean;
@@ -27,6 +29,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   variant = 'list',
   onPress,
   onMore,
+  onLongPress,
   selectionMode = false,
   selected = false,
   selectionIndex,
@@ -59,7 +62,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
 
   if (variant === 'grid') {
     return (
-      <TouchableOpacity activeOpacity={0.75} style={styles.gridCard} onPress={onPress} onLongPress={onMore}>
+      <TouchableOpacity activeOpacity={0.75} style={styles.gridCard} onPress={onPress} onLongPress={onLongPress ?? onMore}>
         <View style={[styles.gridThumb, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
           {thumb}
           <View style={styles.pageBadge}>
@@ -91,7 +94,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
       activeOpacity={0.7}
       style={[styles.row, { backgroundColor: selected ? colors.primaryLight : colors.surface }]}
       onPress={onPress}
-      onLongPress={onMore}
+      onLongPress={onLongPress ?? onMore}
     >
       <View style={[styles.listThumb, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
         {thumb}

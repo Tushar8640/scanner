@@ -102,6 +102,8 @@ interface DocumentState {
    * With removeFromOriginal, those pages are also taken out of the source document.
    */
   extractPages: (documentId: string, pageIds: string[], title: string, removeFromOriginal: boolean) => Promise<Document>;
+  /** Copy: a full duplicate of the document (pages, filters, crops) in the given folder. */
+  copyDocument: (documentId: string, folderId: string | null, title: string) => Promise<Document>;
   /** Saves a re-edited document: its pages are replaced by the edited list, in order. */
   replaceDocumentPages: (documentId: string, title: string | null, images: EditedPageInput[]) => Promise<void>;
 
@@ -348,6 +350,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const rest = all.filter((p) => !pageIds.includes(p.id));
     if (removeFromOriginal && rest.length > 0) await get().replaceDocumentPages(documentId, null, rest.map(toInput));
     return newDoc;
+  },
+
+  copyDocument: async (documentId, folderId, title) => {
+    const pages = await DatabaseService.getPagesByDocumentId(documentId);
+    if (pages.length === 0) throw new Error('This document has no pages');
+    return get().createDocument(
+      title,
+      pages.map((p) => ({
+        originalUri: p.original_path,
+        previewUri: p.original_path,
+        rotation: p.rotation,
+        filter: p.filter,
+        adjust: p.adjust,
+        sourceUri: p.source_path || undefined,
+        corners: p.corners ?? null,
+        ocrText: p.ocr_text,
+      })),
+      folderId,
+      'original'
+    );
   },
 
   replaceDocumentPages: async (documentId, title, images) => {

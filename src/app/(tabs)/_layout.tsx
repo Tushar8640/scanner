@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '@/core/theme/colors';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import type { TranslationKey } from '@/i18n';
+import { useUiStore } from '@/store/useUiStore';
 
 const TAB_META: Record<string, { label: TranslationKey; icon: keyof typeof Ionicons.glyphMap; iconActive: keyof typeof Ionicons.glyphMap }> = {
   index: { label: 'home', icon: 'home-outline', iconActive: 'home' },
@@ -17,6 +18,10 @@ function TabBar({ state, navigateToTab }: BottomTabBarProps) {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const { t } = useSettingsStore();
+  const hidden = useUiStore((s) => s.tabBarHidden);
+
+  // A screen in selection mode shows its own action bar here instead
+  if (hidden) return null;
 
   return (
     <View
