@@ -63,7 +63,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to scan QR codes",
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to scan documents and QR codes",
           "microphonePermission": false,
           "recordAudioAndroid": false
         }

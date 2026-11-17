@@ -86,6 +86,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
+        <Stack.Screen name="batch-scan" options={{ headerShown: false, gestureEnabled: false, animation: 'fade' }} />
         <Stack.Screen name="id-card" options={{ title: t('idCard') }} />
         <Stack.Screen name="qr-scan" options={{ title: t('scanQr'), headerStyle: { backgroundColor: '#000000' }, headerTintColor: '#FFFFFF' }} />
         <Stack.Screen

@@ -249,18 +249,28 @@ function ScanReviewContent() {
     ]);
   };
 
+  // Pages shot on the batch camera (opened from Add page) join the end of this scan
+  useEffect(
+    () =>
+      useDocumentStore.subscribe((state) => {
+        const images = state.reviewAppendImages;
+        if (images.length === 0) return;
+        state.setReviewAppendImages([]);
+        const newEntries = toEditablePages(images, 'page_add', useSettingsStore.getState().default_filter);
+        setPages((prev) => {
+          setCurrentPageIndex(prev.length);
+          return [...prev, ...newEntries];
+        });
+      }),
+    []
+  );
+
   // Add more pages from camera or gallery (FR-12)
   const handleAddPage = async () => {
     Alert.alert(t('addPage'), 'Select source', [
       {
         text: t('scanDocument'),
-        onPress: async () => {
-          const res = await scannerService.scanWithCamera();
-          if (res && res.pages.length > 0) {
-            const newEntries = toEditablePages(res.pages, 'page_add', default_filter);
-            setPages((prev) => [...prev, ...newEntries]);
-          }
-        },
+        onPress: () => router.push({ pathname: '/batch-scan', params: { returnToReview: '1' } }),
       },
       {
         text: t('importGallery'),

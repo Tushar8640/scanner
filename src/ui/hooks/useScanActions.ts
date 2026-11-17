@@ -36,7 +36,8 @@ export function useScanActions() {
   return {
     busy,
     scanWithCamera: () => run('camera', { batch: false, maxNumDocuments: 1 }),
-    scanBatch: () => run('camera', { batch: true, maxNumDocuments: 50 }),
+    // Our own camera screen: shoot page after page, then review them all together
+    scanBatch: () => router.push('/batch-scan'),
     importImages: () => run('gallery'),
   };
 }

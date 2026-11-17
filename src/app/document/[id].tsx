@@ -245,17 +245,18 @@ function DocumentDetail() {
   const addPages = (source: 'camera' | 'gallery') => {
     if (!document) return;
     // Pages go through the normal crop + edit flow, then get appended to this document
+    if (source === 'camera') {
+      // Batch camera, then the normal review screen, which appends to this document
+      router.push({ pathname: '/batch-scan', params: { appendTo: document.id } });
+      return;
+    }
     const go = (res: { pages: { uri: string; cropped?: boolean }[] } | null) => {
       if (res && res.pages.length > 0) {
         setPendingScanImages(res.pages);
         router.push({ pathname: '/scan-review', params: { appendTo: document.id } });
       }
     };
-    const pick =
-      source === 'camera'
-        ? scannerService.scanWithCamera({ maxNumDocuments: 50 })
-        : scannerService.importFromGallery({ allowsMultiple: true });
-    pick.then(go, (e: any) => Alert.alert(t('error'), e?.message || 'Something went wrong'));
+    scannerService.importFromGallery({ allowsMultiple: true }).then(go, (e: any) => Alert.alert(t('error'), e?.message || 'Something went wrong'));
   };
 
   const deleteDocument = () => {

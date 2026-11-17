@@ -20,8 +20,11 @@ interface DocumentState {
   sortBy: SortOption;
   isLoading: boolean;
   pendingScanImages: { uri: string; cropped?: boolean }[];
+  /** Pages shot from the review screen's Add page; the open review screen appends and clears them. */
+  reviewAppendImages: { uri: string; cropped?: boolean }[];
 
   setPendingScanImages: (images: { uri: string; cropped?: boolean }[]) => void;
+  setReviewAppendImages: (images: { uri: string; cropped?: boolean }[]) => void;
   setSearchQuery: (query: string) => void;
   setSortBy: (sort: SortOption) => void;
   setActiveFolderId: (folderId: string | null) => void;
@@ -87,8 +90,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   sortBy: 'newest',
   isLoading: false,
   pendingScanImages: [],
+  reviewAppendImages: [],
 
   setPendingScanImages: (pendingScanImages) => set({ pendingScanImages }),
+  setReviewAppendImages: (reviewAppendImages) => set({ reviewAppendImages }),
 
   setSearchQuery: (searchQuery) => {
     set({ searchQuery });
