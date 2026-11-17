@@ -123,6 +123,15 @@ export const translations = {
     privacyNote: 'All files are strictly stored on your device. No data is sent to external servers.',
     version: 'Version 1.0.0',
     freeAndNoWatermark: '100% Free & No Watermarks',
+    developer: 'Developer',
+    developerName: 'Tushar Imran',
+    developerRole: 'Software Engineer',
+    developerEmail: 'tusar.imran.dev@gmail.com',
+    developerGithub: 'Tushar8640',
+    developerGithubUrl: 'https://github.com/Tushar8640',
+    github: 'GitHub',
+    email: 'Email',
+    emailCopied: 'Email copied to clipboard',
 
     // Edge detection & crop
     cropTitle: 'Adjust Edges',
