@@ -1,15 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Modal,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { SecurityService } from '@/services/security/SecurityService';
 import { useThemeColors } from '@/core/theme/colors';
+
+/** Time in the background before the app asks for the PIN again. */
+const RELOCK_AFTER_MS = 3000;
 
 export const AuthGate: React.FC = () => {
   const { app_lock_enabled, isAuthenticated, setIsAuthenticated, t } = useSettingsStore();
@@ -17,12 +21,40 @@ export const AuthGate: React.FC = () => {
   const [pin, setPin] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
+  const [biometricReady, setBiometricReady] = useState(false);
+  // Neutral notice (e.g. fingerprint not set up); does not mark the PIN as wrong
+  const [infoMsg, setInfoMsg] = useState('');
+  const backgroundAtRef = useRef(0);
 
-  const attemptBiometrics = async () => {
+  // Lock again when the user comes back after leaving the app (Home, app switcher, screen off).
+  // Our own camera, gallery and share trips are excluded (SecurityService.whileLeavingApp).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') {
+        backgroundAtRef.current = SecurityService.isLeavingApp() ? 0 : Date.now();
+      } else if (state === 'active') {
+        const since = backgroundAtRef.current;
+        backgroundAtRef.current = 0;
+        const s = useSettingsStore.getState();
+        if (since && s.app_lock_enabled && s.isAuthenticated && Date.now() - since >= RELOCK_AFTER_MS) {
+          setPin('');
+          setErrorMsg('');
+          s.setIsAuthenticated(false);
+        }
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  const attemptBiometrics = async (manual = false) => {
     try {
-      const success = await SecurityService.authenticateWithBiometrics();
-      if (success) {
+      const result = await SecurityService.authenticateWithBiometrics(t('unlockPrompt'));
+      if (result === 'success') {
         setIsAuthenticated(true);
+        setPin('');
+        setErrorMsg('');
+      } else if (result === 'unavailable' && manual) {
+        setInfoMsg(t('biometricNotSetUp'));
       }
     } catch {
       // User can still enter PIN
@@ -39,7 +71,10 @@ export const AuthGate: React.FC = () => {
     }
     if (app_lock_enabled && !isAuthenticated) {
       checkLockout();
-      attemptBiometrics();
+      SecurityService.isBiometricAvailable().then((ok) => {
+        setBiometricReady(ok);
+        if (ok) attemptBiometrics();
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app_lock_enabled, isAuthenticated]);
@@ -63,6 +98,7 @@ export const AuthGate: React.FC = () => {
 
   const handleKeyPress = (num: string) => {
     if (lockoutSeconds > 0) return;
+    setInfoMsg('');
     if (pin.length < 4) {
       const newPin = pin + num;
       setPin(newPin);
@@ -102,7 +138,7 @@ export const AuthGate: React.FC = () => {
   }
 
   return (
-    <Modal visible animationType="fade" transparent={false}>
+    <Modal visible animationType="fade" transparent={false} onRequestClose={() => {}}>
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <View style={styles.header}>
           <View style={[styles.iconCircle, { backgroundColor: colors.primaryLight }]}>
@@ -129,6 +165,8 @@ export const AuthGate: React.FC = () => {
 
         {errorMsg ? (
           <Text style={[styles.errorText, { color: colors.danger }]}>{errorMsg}</Text>
+        ) : infoMsg ? (
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>{infoMsg}</Text>
         ) : null}
 
         {/* Keypad */}
@@ -151,9 +189,10 @@ export const AuthGate: React.FC = () => {
             <TouchableOpacity
               style={[styles.key, { backgroundColor: colors.surfaceVariant }]}
               disabled={lockoutSeconds > 0}
-              onPress={attemptBiometrics}
+              onPress={() => attemptBiometrics(true)}
+              accessibilityLabel={t('useBiometric')}
             >
-              <Ionicons name="finger-print" size={28} color={colors.primary} />
+              <Ionicons name="finger-print" size={28} color={biometricReady ? colors.primary : colors.textMuted} />
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.key, { backgroundColor: colors.surfaceVariant }]}
@@ -216,6 +255,8 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 14,
     fontWeight: '500',
+    textAlign: 'center',
+    paddingHorizontal: 32,
   },
   keypad: {
     width: '80%',

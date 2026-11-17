@@ -56,6 +56,10 @@ export interface Page {
   /** Legacy single-slider strength; no longer used for rendering. */
   intensity?: number;
   adjust?: PageAdjust | null;
+  /** Uncropped capture, so the page can be re-cropped later. Null for older pages. */
+  source_path?: string | null;
+  /** Crop corners on source_path (normalised TL, TR, BR, BL); null means the whole image. */
+  corners?: { x: number; y: number }[] | null;
   rotation: PageRotation;
   ocr_text: string | null;
 }

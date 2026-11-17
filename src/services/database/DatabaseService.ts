@@ -2,6 +2,18 @@ import * as SQLite from 'expo-sqlite';
 import { Document, Folder, Page } from '@/core/types';
 import { isDefaultAdjust, normaliseAdjust } from '@/services/image/FilterUtils';
 
+/** Reads crop corners stored as JSON; anything malformed counts as "no crop". */
+function parseCorners(value: unknown): { x: number; y: number }[] | null {
+  if (!value) return null;
+  try {
+    const v = typeof value === 'string' ? JSON.parse(value) : value;
+    if (Array.isArray(v) && v.length === 4 && v.every((p) => typeof p?.x === 'number' && typeof p?.y === 'number')) return v;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 export class DatabaseService {
   private static db: SQLite.SQLiteDatabase | null = null;
 
@@ -49,6 +61,8 @@ export class DatabaseService {
         filter TEXT DEFAULT 'magic',
         intensity REAL DEFAULT 0.6,
         adjust TEXT NULL,
+        source_path TEXT NULL,
+        corners TEXT NULL,
         rotation INTEGER CHECK(rotation IN (0, 90, 180, 270)) DEFAULT 0,
         ocr_text TEXT NULL,
         FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
@@ -75,6 +89,13 @@ export class DatabaseService {
     } catch {
       // column already exists
     }
+    for (const col of ['source_path', 'corners']) {
+      try {
+        await db.execAsync(`ALTER TABLE pages ADD COLUMN ${col} TEXT NULL;`);
+      } catch {
+        // column already exists
+      }
+    }
     await this.dropPageFilterCheck(db);
   }
 
@@ -97,12 +118,14 @@ export class DatabaseService {
           filter TEXT DEFAULT 'magic',
           intensity REAL DEFAULT 0.6,
           adjust TEXT NULL,
+          source_path TEXT NULL,
+          corners TEXT NULL,
           rotation INTEGER CHECK(rotation IN (0, 90, 180, 270)) DEFAULT 0,
           ocr_text TEXT NULL,
           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
-        INSERT INTO pages_new (id, document_id, position, original_path, processed_path, filter, intensity, adjust, rotation, ocr_text)
-          SELECT id, document_id, position, original_path, processed_path, filter, intensity, adjust, rotation, ocr_text FROM pages;
+        INSERT INTO pages_new (id, document_id, position, original_path, processed_path, filter, intensity, adjust, source_path, corners, rotation, ocr_text)
+          SELECT id, document_id, position, original_path, processed_path, filter, intensity, adjust, source_path, corners, rotation, ocr_text FROM pages;
         DROP TABLE pages;
         ALTER TABLE pages_new RENAME TO pages;
         CREATE INDEX IF NOT EXISTS idx_pages_doc ON pages(document_id, position);
@@ -131,6 +154,8 @@ export class DatabaseService {
     'filter',
     'intensity',
     'adjust',
+    'source_path',
+    'corners',
     'rotation',
     'ocr_text',
   ]);
@@ -263,6 +288,7 @@ export class DatabaseService {
     const values = keys.map((k) => {
       const v = (updates as any)[k];
       if (k === 'adjust') return isDefaultAdjust(v) ? null : JSON.stringify(normaliseAdjust(v));
+      if (k === 'corners') return v ? JSON.stringify(v) : null;
       return v;
     });
     values.push(id);
@@ -293,7 +319,11 @@ export class DatabaseService {
       [documentId]
     );
     // adjust is stored as JSON text
-    return rows.map((r) => ({ ...r, adjust: r.adjust ? normaliseAdjust(r.adjust) : null }));
+    return rows.map((r) => ({
+      ...r,
+      adjust: r.adjust ? normaliseAdjust(r.adjust) : null,
+      corners: parseCorners(r.corners),
+    }));
   }
 
   static async insertPages(pages: Page[]): Promise<void> {
@@ -307,8 +337,8 @@ export class DatabaseService {
 
       try {
         await db.runAsync(
-          `INSERT INTO pages (id, document_id, position, original_path, processed_path, filter, intensity, adjust, rotation, ocr_text)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO pages (id, document_id, position, original_path, processed_path, filter, intensity, adjust, source_path, corners, rotation, ocr_text)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             page.id,
             page.document_id,
@@ -318,6 +348,8 @@ export class DatabaseService {
             safeFilter,
             safeIntensity,
             isDefaultAdjust(page.adjust) ? null : JSON.stringify(normaliseAdjust(page.adjust)),
+            page.source_path ?? null,
+            page.corners ? JSON.stringify(page.corners) : null,
             safeRotation,
             page.ocr_text,
           ]

@@ -35,7 +35,8 @@ export function useScanActions() {
 
   return {
     busy,
-    scanWithCamera: () => run('camera', { batch: false, maxNumDocuments: 1 }),
+    // Our document camera, opened in Single mode (Batch is one tap away)
+    scanWithCamera: () => router.push({ pathname: '/batch-scan', params: { mode: 'single' } }),
     // Our own camera screen: shoot page after page, then review them all together
     scanBatch: () => router.push('/batch-scan'),
     importImages: () => run('gallery'),

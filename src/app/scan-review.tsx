@@ -28,6 +28,8 @@ import { ScanEngineProvider, useScanEngine } from '@/ui/components/ScanEngine';
 import { FULL_QUAD, Quad, isFullQuad } from '@/services/scanner/quad';
 import { AdjustPanel } from '@/ui/components/AdjustPanel';
 import { useThemeColors } from '@/core/theme/colors';
+import { formatDocumentName } from '@/core/utils/docName';
+import { DatabaseService } from '@/services/database/DatabaseService';
 
 interface EditablePage {
   id: string;
@@ -42,6 +44,9 @@ interface EditablePage {
   rotation: PageRotation;
   filter: PageFilter;
   adjust: PageAdjust;
+  /** Re-editing a saved page: its image path when loaded and its OCR text, kept if the image is unchanged. */
+  savedUri?: string;
+  ocrText?: string | null;
 }
 
 function toEditablePages(
@@ -72,15 +77,17 @@ export default function ScanReviewScreen() {
 
 function ScanReviewContent() {
   // appendTo: opened from a document's "Add" card, so Save appends pages instead of creating a document
-  const params = useLocalSearchParams<{ rawImages?: string; appendTo?: string }>();
+  // editDoc: re-editing a saved document (from its Edit button); Save replaces its pages
+  const params = useLocalSearchParams<{ rawImages?: string; appendTo?: string; editDoc?: string; page?: string }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  const { createDocument, addPages, activeFolderId, pendingScanImages } = useDocumentStore();
+  const { createDocument, addPages, replaceDocumentPages, activeFolderId, pendingScanImages } = useDocumentStore();
   const { default_filter, auto_crop, crop_review, t } = useSettingsStore();
 
   const [pages, setPages] = useState<EditablePage[]>(() => {
     // Check pendingScanImages first (from Zustand store for instantaneous reliable loading)
     let list: { uri: string; cropped?: boolean }[] = [];
+    if (params.editDoc) return []; // loaded from the database below
     if (pendingScanImages && pendingScanImages.length > 0) {
       list = pendingScanImages;
     } else if (params.rawImages) {
@@ -93,7 +100,10 @@ function ScanReviewContent() {
     return toEditablePages(list, 'page', useSettingsStore.getState().default_filter);
   });
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [docTitle, setDocTitle] = useState('');
+  // Starts with the default name, like the reference editor; empty when adding to an existing document
+  const [docTitle, setDocTitle] = useState(() =>
+    params.appendTo || params.editDoc ? '' : formatDocumentName(useSettingsStore.getState().doc_name_format)
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [cropModalVisible, setCropModalVisible] = useState(false);
   const [applyToAll, setApplyToAll] = useState(false);
@@ -110,6 +120,39 @@ function ScanReviewContent() {
   const cropAppliedRef = useRef(false);
   // Typed as any: TextInput's instance typings conflict with React 19 ref types
   const titleRef = useRef<any>(null);
+  const filterScrollRef = useRef<any>(null);
+
+  // Load a saved document for re-editing, with each page's filter, adjustments, rotation and crop
+  useEffect(() => {
+    const id = params.editDoc;
+    if (!id) return;
+    (async () => {
+      const [doc, rows] = await Promise.all([DatabaseService.getDocumentById(id), DatabaseService.getPagesByDocumentId(id)]);
+      if (doc) setDocTitle(doc.title);
+      setPages(
+        rows.map((r) => ({
+          id: r.id,
+          sourceUri: r.source_path || r.original_path,
+          corners: (r.corners as Quad | null | undefined) ?? null,
+          cropState: 'done',
+          originalUri: r.original_path,
+          previewUri: r.original_path,
+          rotation: r.rotation,
+          filter: r.filter,
+          adjust: r.adjust ?? { ...DEFAULT_ADJUST },
+          savedUri: r.original_path,
+          ocrText: r.ocr_text,
+        }))
+      );
+      const start = Number(params.page);
+      if (start > 0 && start < rows.length) setCurrentPageIndex(start);
+    })().catch((e) => {
+      Alert.alert(t('error'), e?.message || 'Could not open the document');
+      router.back();
+    });
+    // Runs once for the document being edited
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const currentPage = pages[currentPageIndex];
   const engine = useScanEngine();
@@ -287,6 +330,16 @@ function ScanReviewContent() {
 
     try {
       setIsSaving(true);
+      if (params.editDoc) {
+        await replaceDocumentPages(
+          params.editDoc,
+          docTitle,
+          pages.map((p) => ({ ...p, ocrText: p.savedUri && p.savedUri === p.originalUri ? p.ocrText : null }))
+        );
+        setIsSaving(false);
+        router.back();
+        return;
+      }
       if (params.appendTo) {
         await addPages(params.appendTo, pages);
         setIsSaving(false);
@@ -349,7 +402,6 @@ function ScanReviewContent() {
     { key: 'markup', icon: 'brush-outline', label: t('markup'), onPress: () => setAnnotateMode('markup'), disabled: pageBusy },
     { key: 'wm', icon: 'water-outline', label: t('watermark'), onPress: () => setAnnotateMode('watermark'), disabled: pageBusy },
     ...(pages.length > 1 ? [{ key: 'batch', icon: 'copy-outline' as const, label: t('batchEdit'), onPress: handleBatchApply }] : []),
-    { key: 'delete', icon: 'trash-outline', label: t('delete'), onPress: handleDeletePage, danger: true },
   ];
 
   return (
@@ -388,6 +440,11 @@ function ScanReviewContent() {
             thumbFilters={FILTER_ORDER}
             onThumbnails={(items) => setThumbs({ uri: currentPage.originalUri, items })}
           />
+        )}
+        {!adjusting && (
+          <TouchableOpacity style={styles.pageDelete} onPress={handleDeletePage} accessibilityLabel={t('delete')}>
+            <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
         )}
         {pageBusy && (
           <View style={styles.loadingOverlay}>
@@ -495,7 +552,7 @@ function ScanReviewContent() {
         <>
           {/* Filters: real previews of this page; tap the selected one again to fine-tune */}
           <View style={styles.filterPanel}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            <ScrollView ref={filterScrollRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
               {FILTER_ORDER.map((f) => {
                 const selected = currentPage?.filter === f;
                 const thumbUri = pageThumbs?.[f];
@@ -504,6 +561,10 @@ function ScanReviewContent() {
                     key={f}
                     style={[styles.filterTile, selected && { borderColor: colors.primary }]}
                     onPress={() => handleFilterPress(f)}
+                    // Keep the page's filter in view, e.g. B&W when re-editing a saved page
+                    onLayout={(e) => {
+                      if (selected) filterScrollRef.current?.scrollTo({ x: Math.max(0, e.nativeEvent.layout.x - 60), animated: false });
+                    }}
                     disabled={pageBusy}
                     accessibilityLabel={filterLabels[f]}
                   >
@@ -649,6 +710,17 @@ const styles = StyleSheet.create({
     borderBottomColor: '#8A8F98',
   },
   previewContainer: { flex: 1, backgroundColor: EDITOR.background },
+  pageDelete: {
+    position: 'absolute',
+    top: 16,
+    left: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   loadingOverlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.6)',

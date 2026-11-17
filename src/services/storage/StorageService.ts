@@ -50,6 +50,14 @@ export class StorageService {
     return targetUri;
   }
 
+  /** Keeps the uncropped capture so the page can be re-cropped later. */
+  static async saveSourceImage(documentId: string, pageId: string, sourceUri: string): Promise<string> {
+    const { origDir } = await this.ensureDocumentDir(documentId);
+    const targetUri = `${origDir}${pageId}_src.jpg`;
+    await this.safeCopyFile(sourceUri, targetUri);
+    return targetUri;
+  }
+
   static async saveProcessedImage(documentId: string, pageId: string, sourceUri: string): Promise<string> {
     const { procDir } = await this.ensureDocumentDir(documentId);
     const targetUri = `${procDir}${pageId}.jpg`;

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ScrollView, Modal, View, Text, TextInput, StyleSheet, Alert } from 'react-native';
+import { useRef, useState } from 'react';
+import { ScrollView, Modal, View, Text, TextInput, StyleSheet, Alert, Pressable } from 'react-native';
 import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '@/core/theme/colors';
@@ -12,34 +12,92 @@ import { SettingsGroup, SettingsRow, SettingsSwitch, settingsScreenStyles } from
 export default function SecuritySettingsScreen() {
   const colors = useThemeColors();
   const { t, app_lock_enabled, setAppLockEnabled } = useSettingsStore();
-  const [pinModal, setPinModal] = useState<'set' | 'change' | null>(null);
+  // purpose: what happens when the flow finishes. step: which PIN is being typed.
+  const [flow, setFlow] = useState<{ purpose: 'enable' | 'change' | 'disable'; step: 'current' | 'new' | 'confirm' } | null>(
+    null
+  );
   const [pin, setPin] = useState('');
+  const [firstPin, setFirstPin] = useState('');
+  const [error, setError] = useState('');
+  const inputRef = useRef<any>(null);
+
+  const focusInput = () => {
+    setTimeout(() => inputRef.current?.focus(), 150);
+  };
+
+  const startFlow = (purpose: 'enable' | 'change' | 'disable', step: 'current' | 'new') => {
+    setPin('');
+    setFirstPin('');
+    setError('');
+    setFlow({ purpose, step });
+  };
+
+  const closeFlow = () => {
+    setFlow(null);
+    setPin('');
+    setFirstPin('');
+    setError('');
+  };
 
   const toggleLock = async (value: boolean) => {
     if (!value) {
-      await setAppLockEnabled(false);
+      // Turning the lock off needs the current PIN, so someone holding the open phone cannot disable it
+      if (await SecurityService.hasPin()) startFlow('disable', 'current');
+      else await setAppLockEnabled(false);
       return;
     }
-    // Turning the lock on needs a PIN first
-    if (await SecurityService.hasPin()) await setAppLockEnabled(true);
-    else {
-      setPin('');
-      setPinModal('set');
-    }
+    startFlow('enable', 'new');
   };
 
-  const savePin = async () => {
-    if (pin.length !== 4) {
-      Alert.alert(t('warning'), t('enterPin'));
+  const submit = async (value: string) => {
+    if (!flow || value.length !== 4) return;
+    if (flow.step === 'current') {
+      const res = await SecurityService.verifyPin(value);
+      if (!res.success) {
+        setPin('');
+        setError(res.lockedOut ? `${t('wrongPin')} (${res.lockoutRemainingSeconds}s)` : t('wrongPin'));
+        return;
+      }
+      if (flow.purpose === 'disable') {
+        await setAppLockEnabled(false);
+        closeFlow();
+        return;
+      }
+      setPin('');
+      setError('');
+      setFlow({ ...flow, step: 'new' });
       return;
     }
-    const changing = pinModal === 'change';
-    await SecurityService.setPin(pin);
+    if (flow.step === 'new') {
+      setFirstPin(value);
+      setPin('');
+      setError('');
+      setFlow({ ...flow, step: 'confirm' });
+      return;
+    }
+    if (value !== firstPin) {
+      setPin('');
+      setFirstPin('');
+      setError(t('pinMismatch'));
+      setFlow({ ...flow, step: 'new' });
+      return;
+    }
+    await SecurityService.setPin(value);
     await setAppLockEnabled(true);
-    setPinModal(null);
-    setPin('');
+    const changing = flow.purpose === 'change';
+    closeFlow();
     Alert.alert(t('success'), changing ? t('pinUpdated') : t('lockEnabled'));
   };
+
+  const onChangePin = (v: string) => {
+    const clean = v.replace(/[^0-9]/g, '').slice(0, 4);
+    setPin(clean);
+    if (clean.length > 0) setError('');
+    if (clean.length === 4) submit(clean);
+  };
+
+  const stepTitle =
+    flow?.step === 'current' ? t('currentPin') : flow?.step === 'confirm' ? t('confirmPin') : t('enterPin');
 
   return (
     <ScrollView style={[settingsScreenStyles.scroll, { backgroundColor: colors.background }]} contentContainerStyle={settingsScreenStyles.content}>
@@ -51,10 +109,7 @@ export default function SecuritySettingsScreen() {
           <SettingsRow
             icon="key-outline"
             label={t('changePin')}
-            onPress={() => {
-              setPin('');
-              setPinModal('change');
-            }}
+            onPress={() => startFlow('change', 'current')}
           />
         )}
       </SettingsGroup>
@@ -63,15 +118,16 @@ export default function SecuritySettingsScreen() {
         <SettingsRow icon="phone-portrait-outline" label={t('offlineBadge')} subtitle={t('offlineBadgeDesc')} />
       </SettingsGroup>
 
-      <Modal visible={pinModal !== null} transparent animationType="fade" onRequestClose={() => setPinModal(null)}>
+      <Modal visible={flow !== null} transparent animationType="fade" onRequestClose={closeFlow} onShow={focusInput}>
         <View style={[styles.backdrop, { backgroundColor: colors.overlay }]}>
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={[styles.iconBox, { backgroundColor: colors.primaryLight }]}>
               <Ionicons name="key" size={28} color={colors.primary} />
             </View>
-            <Text style={[styles.title, { color: colors.text }]}>{pinModal === 'change' ? t('changePin') : t('setPin')}</Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{t('enterPin')}</Text>
-            <View style={styles.boxes}>
+            <Text style={[styles.title, { color: colors.text }]}>{flow?.purpose === 'change' ? t('changePin') : flow?.purpose === 'disable' ? t('appLock') : t('setPin')}</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{stepTitle}</Text>
+            {/* Tapping the boxes opens the number keyboard */}
+            <Pressable style={styles.boxes} onPress={focusInput}>
               {[0, 1, 2, 3].map((i) => {
                 const filled = pin.length > i;
                 return (
@@ -86,20 +142,21 @@ export default function SecuritySettingsScreen() {
                   </View>
                 );
               })}
-            </View>
+            </Pressable>
+            {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
             {/* Invisible input drives the four boxes */}
             <TextInput
+              ref={inputRef}
               style={styles.hiddenInput}
               value={pin}
-              onChangeText={(v) => setPin(v.replace(/[^0-9]/g, '').slice(0, 4))}
+              onChangeText={onChangePin}
               keyboardType="number-pad"
               maxLength={4}
-              autoFocus
               secureTextEntry
+              caretHidden
             />
             <View style={styles.actions}>
-              <ActionButton title={t('cancel')} variant="outline" onPress={() => setPinModal(null)} style={styles.flex1} />
-              <ActionButton title={t('save')} disabled={pin.length !== 4} onPress={savePin} style={styles.flex1} />
+              <ActionButton title={t('cancel')} variant="outline" onPress={closeFlow} style={styles.flex1} />
             </View>
           </View>
         </View>
@@ -118,6 +175,7 @@ const styles = StyleSheet.create({
   box: { width: 48, height: 56, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   dot: { width: 14, height: 14, borderRadius: 7 },
   hiddenInput: { position: 'absolute', opacity: 0, width: 1, height: 1 },
+  error: { fontSize: 13, marginTop: -8, marginBottom: 12, textAlign: 'center' },
   actions: { flexDirection: 'row', gap: 10, alignSelf: 'stretch' },
   flex1: { flex: 1 },
 });

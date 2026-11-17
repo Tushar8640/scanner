@@ -35,7 +35,38 @@ async function hashPinWithSalt(pin: string, salt: string): Promise<string> {
   );
 }
 
+export type BiometricResult = 'success' | 'unavailable' | 'failed';
+
+// Counts our own trips out of the app (camera, gallery, share sheet, biometric prompt),
+// so coming back from them does not lock the app again.
+let leavingDepth = 0;
+
 export class SecurityService {
+  /** Runs fn while the app is expected to go to the background without needing a re-lock. */
+  static async whileLeavingApp<T>(fn: () => Promise<T>): Promise<T> {
+    leavingDepth++;
+    try {
+      return await fn();
+    } finally {
+      // The 'active' event can arrive just after fn resolves
+      setTimeout(() => {
+        leavingDepth = Math.max(0, leavingDepth - 1);
+      }, 1500);
+    }
+  }
+
+  static isLeavingApp(): boolean {
+    return leavingDepth > 0;
+  }
+
+  static async isBiometricAvailable(): Promise<boolean> {
+    try {
+      return (await LocalAuthentication.hasHardwareAsync()) && (await LocalAuthentication.isEnrolledAsync());
+    } catch {
+      return false;
+    }
+  }
+
   static async isLockEnabled(): Promise<boolean> {
     const val = await SecureStore.getItemAsync(LOCK_ENABLED_KEY);
     return val === 'true';
@@ -139,20 +170,16 @@ export class SecurityService {
     };
   }
 
-  static async authenticateWithBiometrics(prompt: string = 'Unlock Doc Scanner'): Promise<boolean> {
-    const hasHardware = await LocalAuthentication.hasHardwareAsync();
-    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-
-    if (!hasHardware || !isEnrolled) {
-      return false;
-    }
-
-    const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: prompt,
-      fallbackLabel: 'Use PIN',
-      disableDeviceFallback: false,
-    });
-
-    return result.success;
+  static async authenticateWithBiometrics(prompt: string = 'Unlock Doc Scanner'): Promise<BiometricResult> {
+    if (!(await this.isBiometricAvailable())) return 'unavailable';
+    const result = await this.whileLeavingApp(() =>
+      LocalAuthentication.authenticateAsync({
+        promptMessage: prompt,
+        cancelLabel: 'Use PIN',
+        // The app's own PIN is the fallback, not the phone's screen lock
+        disableDeviceFallback: true,
+      })
+    );
+    return result.success ? 'success' : 'failed';
   }
 }

@@ -6,6 +6,7 @@ import { Page, PageRotation, PdfPageSize, PdfQuality } from '@/core/types';
 import { StorageService } from '../storage/StorageService';
 import { ImageService } from '../image/ImageService';
 import { generatePageMarkup } from '../image/FilterUtils';
+import { SecurityService } from '../security/SecurityService';
 
 export interface GeneratePdfOptions {
   title: string;
@@ -232,7 +233,9 @@ export class PdfService {
   static async saveToDownloads(pdfPath: string, fileName: string): Promise<boolean> {
     if (Platform.OS === 'android' && FileSystem.StorageAccessFramework) {
       try {
-        const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+        const permissions = await SecurityService.whileLeavingApp(() =>
+          FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync()
+        );
         if (permissions.granted) {
           const base64 = await FileSystem.readAsStringAsync(pdfPath, {
             encoding: FileSystem.EncodingType.Base64,
@@ -269,10 +272,12 @@ export class PdfService {
       throw new Error('File does not exist at specified path.');
     }
 
-    await Sharing.shareAsync(fileUri, {
-      mimeType,
-      dialogTitle: title,
-      UTI: mimeType === 'application/pdf' ? 'com.adobe.pdf' : 'public.jpeg',
-    });
+    await SecurityService.whileLeavingApp(() =>
+      Sharing.shareAsync(fileUri, {
+        mimeType,
+        dialogTitle: title,
+        UTI: mimeType === 'application/pdf' ? 'com.adobe.pdf' : 'public.jpeg',
+      })
+    );
   }
 }

@@ -3,6 +3,7 @@ import * as ImagePicker from 'expo-image-picker';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { IScannerService, ScanOptions } from './IScannerService';
 import { ScanResult } from '@/core/types';
+import { SecurityService } from '@/services/security/SecurityService';
 
 export class ScannerService implements IScannerService {
   /**
@@ -10,6 +11,10 @@ export class ScannerService implements IScannerService {
    * Utilizes native document scanner module when present, with camera fallback.
    */
   async scanWithCamera(options?: ScanOptions): Promise<ScanResult | null> {
+    return SecurityService.whileLeavingApp(() => this.scanWithCameraInner(options));
+  }
+
+  private async scanWithCameraInner(options?: ScanOptions): Promise<ScanResult | null> {
     try {
       // 1. Try native edge-detection scanner if not in Expo Go
       if (Constants.executionEnvironment !== ExecutionEnvironment.StoreClient) {
@@ -112,6 +117,10 @@ export class ScannerService implements IScannerService {
    * Imports one or multiple images from device gallery (FR-04)
    */
   async importFromGallery(options?: { allowsMultiple?: boolean }): Promise<ScanResult | null> {
+    return SecurityService.whileLeavingApp(() => this.importFromGalleryInner(options));
+  }
+
+  private async importFromGalleryInner(options?: { allowsMultiple?: boolean }): Promise<ScanResult | null> {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       throw new Error('Storage permission is required to import from gallery');

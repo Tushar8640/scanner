@@ -474,7 +474,12 @@ function DocumentDetail() {
         ]}
       >
         <BarButton icon="camera-outline" label={t('add')} color={colors.text} onPress={() => setSheet('add')} />
-        <BarButton icon="create-outline" label={t('edit')} color={colors.text} onPress={() => setViewerIndex(0)} />
+        <BarButton
+          icon="create-outline"
+          label={t('edit')}
+          color={colors.text}
+          onPress={() => document && router.push({ pathname: '/scan-review', params: { editDoc: document.id } })}
+        />
         <BarButton icon="share-social-outline" label={t('share')} color={colors.text} onPress={() => setSheet('share')} />
         <BarButton icon="document-text-outline" label="PDF" color={colors.text} onPress={() => setPdfModalVisible(true)} />
         <BarButton
@@ -543,6 +548,15 @@ function DocumentDetail() {
           )}
           {viewerPage && viewerIndex !== null && (
             <View style={styles.viewerTools}>
+              <ViewerTool
+                icon="options-outline"
+                label={t('edit')}
+                onPress={() => {
+                  const index = viewerIndex;
+                  setViewerIndex(null);
+                  if (document) router.push({ pathname: '/scan-review', params: { editDoc: document.id, page: String(index) } });
+                }}
+              />
               <ViewerTool icon="refresh" label={t('rotate')} onPress={() => rotatePage(viewerIndex)} />
               <ViewerTool icon="brush-outline" label={t('markup')} onPress={() => openAnnotate('markup', viewerPage)} />
               <ViewerTool icon="create-outline" label={t('sign')} onPress={() => { setViewerHint(null); openAnnotate('sign', viewerPage); }} />

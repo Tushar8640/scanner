@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   Alert,
   Animated,
-  Modal,
   ScrollView,
   ActivityIndicator,
   BackHandler,
+  Modal,
+  Switch,
+  useWindowDimensions,
 } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -32,6 +34,16 @@ interface CapturedPage {
   cropped?: boolean;
 }
 
+/** Tabs under the preview. Single and Batch shoot here; the others open their own tool. */
+type ModeTab = { key: string; label: 'extractText' | 'idCard' | 'batchModeSingle' | 'batchModeBatch' | 'scanQr'; route?: string };
+const MODE_TABS: ModeTab[] = [
+  { key: 'text', label: 'extractText', route: '/extract-text' },
+  { key: 'single', label: 'batchModeSingle' },
+  { key: 'batch', label: 'batchModeBatch' },
+  { key: 'id', label: 'idCard', route: '/id-card' },
+  { key: 'qr', label: 'scanQr', route: '/qr-scan' },
+];
+
 const MAX_PAGES = 50;
 const FLASH_ORDER: FlashSetting[] = ['off', 'auto', 'on', 'torch'];
 const FLASH_ICON: Record<FlashSetting, keyof typeof Ionicons.glyphMap> = {
@@ -40,38 +52,47 @@ const FLASH_ICON: Record<FlashSetting, keyof typeof Ionicons.glyphMap> = {
   on: 'flash',
   torch: 'flashlight',
 };
+const BADGE = '#FF5A4E';
 
 /**
- * Batch camera: shoot page after page without leaving the camera. The last page shows as a
- * thumbnail with a running count; Done sends every page to the review screen, where edges are
- * detected and cropped automatically.
+ * Document camera. Single takes one page and opens the editor; Batch keeps shooting, the last
+ * page shows as a thumbnail with a running count, and tapping it opens the editor with every page.
  *
  * Params:
+ * - mode: 'single' | 'batch' (default batch)
  * - appendTo: document id; the reviewed pages are appended to that document.
- * - returnToReview: opened from the review screen's Add page; pages go back to that screen.
+ * - returnToReview: opened from the editor's Add page; pages go back to that screen.
  */
 export default function BatchScanScreen() {
-  const params = useLocalSearchParams<{ appendTo?: string; returnToReview?: string }>();
+  const params = useLocalSearchParams<{ appendTo?: string; returnToReview?: string; mode?: string }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { t } = useSettingsStore();
   const setPendingScanImages = useDocumentStore((s) => s.setPendingScanImages);
   const setReviewAppendImages = useDocumentStore((s) => s.setReviewAppendImages);
   const [permission, requestPermission] = useCameraPermissions();
 
-  // Typed as any: CameraView's class typings conflict with React 19 ref types (same as WebView here)
+  // Typed as any: CameraView's class typings conflict with React 19 ref types
   const cameraRef = useRef<any>(null);
   const [cameraReady, setCameraReady] = useState(false);
-  const [mode, setMode] = useState<CaptureMode>('batch');
+  const [mode, setMode] = useState<CaptureMode>(params.mode === 'single' ? 'single' : 'batch');
   const [flash, setFlash] = useState<FlashSetting>('off');
+  const [hd, setHd] = useState(true);
+  const [grid, setGrid] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
   const [pages, setPages] = useState<CapturedPage[]>([]);
   const [capturing, setCapturing] = useState(false);
-  const [trayVisible, setTrayVisible] = useState(false);
   const [importing, setImporting] = useState(false);
   const finishedRef = useRef(false);
+  const tabsRef = useRef<any>(null);
+  const tabLayouts = useRef<Record<string, { x: number; w: number }>>({});
 
   const [flashAnim] = useState(() => new Animated.Value(0));
   const [thumbAnim] = useState(() => new Animated.Value(1));
+
+  const previewHeight = Math.round((width * 4) / 3);
+  const started = pages.length > 0;
 
   const finish = (list: CapturedPage[]) => {
     if (list.length === 0 || finishedRef.current) return;
@@ -100,17 +121,29 @@ export default function BatchScanScreen() {
   // Android back button asks before throwing captured pages away
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (trayVisible) {
-        setTrayVisible(false);
-        return true;
-      }
       if (pages.length === 0) return false;
       confirmClose();
       return true;
     });
     return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pages.length, trayVisible]);
+  }, [pages.length]);
+
+  // Keep the selected tab centred under the shutter
+  const centreTab = (key: string, animated = true) => {
+    const l = tabLayouts.current[key];
+    if (l) tabsRef.current?.scrollTo({ x: Math.max(0, l.x + l.w / 2 - width / 2), animated });
+  };
+
+  const onTabPress = (tab: ModeTab) => {
+    if (tab.route) {
+      router.replace(tab.route as any);
+      return;
+    }
+    const m = tab.key as CaptureMode;
+    setMode(m);
+    centreTab(m);
+  };
 
   const playCaptureFeedback = () => {
     flashAnim.setValue(0.85);
@@ -127,7 +160,7 @@ export default function BatchScanScreen() {
     }
     try {
       setCapturing(true);
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+      const photo = await cameraRef.current.takePictureAsync({ quality: hd ? 1 : 0.7 });
       if (!photo?.uri) return;
       const page: CapturedPage = { id: `cap_${Date.now()}_${pages.length}`, uri: photo.uri };
       const next = [...pages, page];
@@ -148,9 +181,8 @@ export default function BatchScanScreen() {
       if (!res || res.pages.length === 0) return;
       const room = MAX_PAGES - pages.length;
       const added = res.pages.slice(0, room).map((p, i) => ({ id: `imp_${Date.now()}_${i}`, uri: p.uri, cropped: p.cropped }));
-      const next = [...pages, ...added];
-      setPages(next);
-      if (mode === 'single') finish(next);
+      // Imported pages go straight to the editor, like the reference app
+      finish([...pages, ...added]);
     } catch (e: any) {
       Alert.alert(t('error'), e?.message || 'Something went wrong');
     } finally {
@@ -158,13 +190,7 @@ export default function BatchScanScreen() {
     }
   };
 
-  const removePage = (id: string) => {
-    setPages((prev) => {
-      const next = prev.filter((p) => p.id !== id);
-      if (next.length === 0) setTrayVisible(false);
-      return next;
-    });
-  };
+  const undoLast = () => setPages((prev) => prev.slice(0, -1));
 
   const cycleFlash = () => setFlash((f) => FLASH_ORDER[(FLASH_ORDER.indexOf(f) + 1) % FLASH_ORDER.length]);
 
@@ -173,7 +199,7 @@ export default function BatchScanScreen() {
   if (!permission.granted) {
     return (
       <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <Stack.Screen options={{ headerShown: true, title: t('batchScan') }} />
+        <Stack.Screen options={{ headerShown: true, title: t('scanDocument') }} />
         <Ionicons name="camera-outline" size={56} color={colors.primary} />
         <Text style={[styles.permText, { color: colors.text }]}>{t('cameraPermissionScan')}</Text>
         <ActionButton title={t('allowCamera')} onPress={requestPermission} />
@@ -182,322 +208,192 @@ export default function BatchScanScreen() {
   }
 
   const lastPage = pages[pages.length - 1];
+  const visibleTabs = started ? MODE_TABS.filter((m) => m.key === mode) : MODE_TABS;
 
   return (
     <View style={styles.black}>
       <StatusBar style="light" />
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing="back"
-        flash={flash === 'torch' ? 'off' : flash}
-        enableTorch={flash === 'torch'}
-        onCameraReady={() => setCameraReady(true)}
-        onMountError={(e) => Alert.alert(t('error'), e.message)}
-      />
-
-      {/* Shutter flash */}
-      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.flashOverlay, { opacity: flashAnim }]} />
 
       {/* Top bar */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 6 }]}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity style={styles.iconBtn} onPress={confirmClose} accessibilityLabel={t('cancel')}>
-          <Ionicons name="close" size={28} color="#FFFFFF" />
+          <Ionicons name="close" size={30} color="#FFFFFF" />
         </TouchableOpacity>
-        <Text style={styles.topTitle}>{mode === 'batch' ? t('batchScan') : t('batchModeSingle')}</Text>
-        <TouchableOpacity style={styles.iconBtn} onPress={cycleFlash} accessibilityLabel={t('flash')}>
-          <Ionicons name={FLASH_ICON[flash]} size={24} color={flash === 'off' ? '#FFFFFF' : '#FFD54F'} />
-        </TouchableOpacity>
+        <View style={styles.topRight}>
+          <TouchableOpacity style={styles.iconBtn} onPress={cycleFlash} accessibilityLabel={t('flash')}>
+            <Ionicons name={FLASH_ICON[flash]} size={26} color={flash === 'off' ? '#FFFFFF' : '#FFD54F'} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => setHd((v) => !v)} accessibilityLabel="HD">
+            <View style={[styles.hdBadge, !hd && styles.hdOff]}>
+              <Text style={[styles.hdText, !hd && styles.hdTextOff]}>HD</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => setMenuVisible(true)} accessibilityLabel={t('more')}>
+            <Ionicons name="ellipsis-vertical" size={26} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Framing guide */}
-      <View pointerEvents="none" style={styles.guideWrap}>
-        <View style={styles.guide}>
-          <View style={[styles.corner, styles.cTL]} />
-          <View style={[styles.corner, styles.cTR]} />
-          <View style={[styles.corner, styles.cBL]} />
-          <View style={[styles.corner, styles.cBR]} />
-        </View>
-        <Text style={styles.hint}>
-          {pages.length > 0 && mode === 'batch'
-            ? t('batchNextPageHint').replace('{n}', String(pages.length + 1))
-            : t('batchHint')}
-        </Text>
+      {/* 3:4 preview */}
+      <View style={{ width, height: previewHeight }}>
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          ratio="4:3"
+          flash={flash === 'torch' ? 'off' : flash}
+          enableTorch={flash === 'torch'}
+          onCameraReady={() => setCameraReady(true)}
+          onMountError={(e) => Alert.alert(t('error'), e.message)}
+        />
+        {grid && (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <View style={[styles.gridV, { left: '33.33%' }]} />
+            <View style={[styles.gridV, { left: '66.66%' }]} />
+            <View style={[styles.gridH, { top: '33.33%' }]} />
+            <View style={[styles.gridH, { top: '66.66%' }]} />
+          </View>
+        )}
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.flashOverlay, { opacity: flashAnim }]} />
       </View>
+
+      {/* Mode tabs */}
+      <ScrollView
+        ref={tabsRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabsScroll}
+        contentContainerStyle={[styles.tabsRow, { paddingHorizontal: width / 2 }]}
+        scrollEnabled={!started}
+      >
+        {visibleTabs.map((m) => {
+          const active = m.key === mode;
+          return (
+            <TouchableOpacity
+              key={m.key}
+              style={styles.tab}
+              onPress={() => onTabPress(m)}
+              disabled={started}
+              onLayout={(e) => {
+                tabLayouts.current[m.key] = { x: e.nativeEvent.layout.x, w: e.nativeEvent.layout.width };
+                if (m.key === mode) requestAnimationFrame(() => centreTab(m.key, false));
+              }}
+            >
+              {active && <View style={[styles.tabIndicator, { backgroundColor: colors.primary }]} />}
+              <Text style={[styles.tabText, active && { color: colors.primary }]}>{t(m.label)}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
       {/* Bottom controls */}
-      <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}>
-        {/* Single / Batch switch; locked once pages are captured so nothing is lost */}
-        <View style={styles.modeRow}>
-          {(['single', 'batch'] as CaptureMode[]).map((m) => {
-            const active = mode === m;
-            const locked = pages.length > 0 && !active;
-            return (
-              <TouchableOpacity
-                key={m}
-                onPress={() => setMode(m)}
-                disabled={locked}
-                style={[styles.modeChip, active && { backgroundColor: colors.primary }, locked && styles.modeLocked]}
-              >
-                <Text style={styles.modeText}>{m === 'single' ? t('batchModeSingle') : t('batchModeBatch')}</Text>
-              </TouchableOpacity>
-            );
-          })}
+      <View style={[styles.controls, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={styles.side}>
+          {started ? (
+            <TouchableOpacity style={styles.sideBtn} onPress={undoLast} accessibilityLabel={t('undo')}>
+              <Ionicons name="arrow-undo-outline" size={30} color="#FFFFFF" />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.sideBtn} onPress={() => router.replace('/tools')}>
+              <Ionicons name="apps" size={30} color="#FFFFFF" />
+              <Text style={styles.sideText}>{t('allFeatures')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <View style={styles.controls}>
-          {/* Left: stack of captured pages, or gallery import before the first shot */}
-          <View style={styles.side}>
-            {lastPage ? (
-              <TouchableOpacity onPress={() => setTrayVisible(true)} accessibilityLabel={t('capturedPages')}>
-                <Animated.View style={[styles.stack, { transform: [{ scale: thumbAnim }] }]}>
-                  {pages.length > 1 && <View style={[styles.stackBehind, { borderColor: '#FFFFFF' }]} />}
-                  <Image source={{ uri: lastPage.uri }} style={styles.stackImg} />
-                  <View style={[styles.badge, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.badgeText}>{pages.length}</Text>
-                  </View>
-                </Animated.View>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.roundBtn} onPress={importFromGallery} disabled={importing} accessibilityLabel={t('importGallery')}>
-                {importing ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="images-outline" size={26} color="#FFFFFF" />}
-              </TouchableOpacity>
-            )}
-          </View>
+        <TouchableOpacity
+          style={[styles.shutter, { borderColor: colors.primary }, (!cameraReady || capturing) && styles.shutterBusy]}
+          onPress={capture}
+          disabled={!cameraReady || capturing}
+          accessibilityLabel={t('scan')}
+        >
+          <View style={styles.shutterInner}>{capturing && <ActivityIndicator color={colors.primary} />}</View>
+        </TouchableOpacity>
 
-          {/* Shutter */}
-          <TouchableOpacity
-            style={[styles.shutter, (!cameraReady || capturing) && styles.shutterBusy]}
-            onPress={capture}
-            disabled={!cameraReady || capturing}
-            accessibilityLabel={t('scan')}
-          >
-            <View style={styles.shutterInner}>{capturing && <ActivityIndicator color={colors.primary} />}</View>
-          </TouchableOpacity>
-
-          {/* Right: Done once there are pages */}
-          <View style={styles.side}>
-            {pages.length > 0 ? (
-              <TouchableOpacity
-                style={[styles.doneBtn, { backgroundColor: colors.primary }]}
-                onPress={() => finish(pages)}
-                disabled={capturing}
-                accessibilityLabel={t('batchDone')}
-              >
-                <Ionicons name="checkmark" size={22} color="#FFFFFF" />
-                <Text style={styles.doneText}>{t('batchDone')}</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.roundBtnPlaceholder} />
-            )}
-          </View>
+        <View style={styles.side}>
+          {lastPage ? (
+            <TouchableOpacity style={styles.thumbBtn} onPress={() => finish(pages)} accessibilityLabel={t('batchDone')}>
+              <Animated.View style={{ transform: [{ scale: thumbAnim }] }}>
+                <Image source={{ uri: lastPage.uri }} style={styles.thumb} />
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{pages.length}</Text>
+                </View>
+              </Animated.View>
+              <Ionicons name="chevron-forward" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.sideBtn} onPress={importFromGallery} disabled={importing}>
+              {importing ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="images-outline" size={30} color="#FFFFFF" />}
+              <Text style={styles.sideText}>{t('importImages')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      {/* Captured pages tray: review, delete a bad shot, then keep scanning */}
-      <Modal visible={trayVisible} transparent animationType="slide" onRequestClose={() => setTrayVisible(false)}>
-        <View style={styles.trayBackdrop}>
-          <View style={[styles.tray, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            <View style={styles.trayHeader}>
-              <Text style={styles.trayTitle}>
-                {t('capturedPages')} ({pages.length})
-              </Text>
-              <TouchableOpacity onPress={() => setTrayVisible(false)} style={styles.iconBtn} accessibilityLabel={t('cancel')}>
-                <Ionicons name="close" size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView contentContainerStyle={styles.trayGrid}>
-              {pages.map((p, idx) => (
-                <View key={p.id} style={styles.trayItem}>
-                  <Image source={{ uri: p.uri }} style={styles.trayImg} />
-                  <View style={styles.trayNum}>
-                    <Text style={styles.trayNumText}>{idx + 1}</Text>
-                  </View>
-                  <TouchableOpacity style={styles.trayDelete} onPress={() => removePage(p.id)} accessibilityLabel={t('delete')}>
-                    <Ionicons name="trash" size={16} color="#FFFFFF" />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-            <View style={styles.trayActions}>
-              <TouchableOpacity style={[styles.trayBtn, styles.trayBtnGhost]} onPress={() => setTrayVisible(false)}>
-                <Ionicons name="camera-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.trayBtnText}>{t('continueScanning')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.trayBtn, { backgroundColor: colors.primary }]}
-                onPress={() => {
-                  setTrayVisible(false);
-                  finish(pages);
-                }}
-              >
-                <Ionicons name="checkmark" size={18} color="#FFFFFF" />
-                <Text style={styles.trayBtnText}>{t('batchDone')}</Text>
-              </TouchableOpacity>
+      {/* More menu */}
+      <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+        <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={() => setMenuVisible(false)}>
+          <View style={[styles.menu, { top: insets.top + 64 }]}>
+            <View style={styles.menuRow}>
+              <Ionicons name="grid-outline" size={20} color="#FFFFFF" />
+              <Text style={styles.menuText}>{t('showGrid')}</Text>
+              <Switch value={grid} onValueChange={setGrid} trackColor={{ true: colors.primary }} />
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
 }
 
-const CORNER = 28;
-const STACK_W = 52;
-const STACK_H = 68;
+const THUMB_W = 52;
+const THUMB_H = 64;
 
 const styles = StyleSheet.create({
   black: { flex: 1, backgroundColor: '#000000' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32 },
   permText: { fontSize: 15, textAlign: 'center' },
   flashOverlay: { backgroundColor: '#FFFFFF' },
-  topBar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    paddingBottom: 8,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-  },
-  topTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingBottom: 10 },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: 18 },
   iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  guideWrap: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: 14, paddingBottom: 120 },
-  guide: { width: '78%', aspectRatio: 1 / 1.35 },
-  corner: { position: 'absolute', width: CORNER, height: CORNER, borderColor: 'rgba(255,255,255,0.9)' },
-  cTL: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 6 },
-  cTR: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 6 },
-  cBL: { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 6 },
-  cBR: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 6 },
-  hint: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingHorizontal: 24,
-    textShadowColor: '#000000',
-    textShadowRadius: 4,
-  },
-  bottom: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingTop: 12,
-    gap: 14,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  modeRow: { flexDirection: 'row', alignSelf: 'center', gap: 8 },
-  modeChip: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.15)' },
-  modeLocked: { opacity: 0.35 },
-  modeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24 },
-  side: { width: 96, alignItems: 'center' },
-  roundBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roundBtnPlaceholder: { width: 52, height: 52 },
-  stack: { width: STACK_W, height: STACK_H },
-  stackBehind: {
-    position: 'absolute',
-    top: -4,
-    left: 4,
-    width: STACK_W,
-    height: STACK_H,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-  },
-  stackImg: { width: STACK_W, height: STACK_H, borderRadius: 6, borderWidth: 2, borderColor: '#FFFFFF' },
+  hdBadge: { backgroundColor: '#FFFFFF', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 },
+  hdOff: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#FFFFFF' },
+  hdText: { color: '#000000', fontSize: 13, fontWeight: '900' },
+  hdTextOff: { color: '#FFFFFF' },
+  gridV: { position: 'absolute', top: 0, bottom: 0, width: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.6)' },
+  gridH: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.6)' },
+  tabsScroll: { flexGrow: 0 },
+  tabsRow: { alignItems: 'center', gap: 6 },
+  tab: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10, alignItems: 'center' },
+  tabIndicator: { position: 'absolute', top: 0, width: 28, height: 4, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
+  tabText: { color: '#D0D3D8', fontSize: 16, fontWeight: '500' },
+  controls: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
+  side: { width: 110, alignItems: 'center' },
+  sideBtn: { alignItems: 'center', gap: 6, minWidth: 80 },
+  sideText: { color: '#FFFFFF', fontSize: 13, textAlign: 'center' },
+  shutter: { width: 84, height: 84, borderRadius: 42, borderWidth: 6, alignItems: 'center', justifyContent: 'center' },
+  shutterBusy: { opacity: 0.6 },
+  shutterInner: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#F1F1F1', alignItems: 'center', justifyContent: 'center' },
+  thumbBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  thumb: { width: THUMB_W, height: THUMB_H, borderRadius: 3, backgroundColor: '#333' },
   badge: {
     position: 'absolute',
-    top: -8,
-    right: -8,
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    paddingHorizontal: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
-  shutter: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    borderWidth: 4,
+    top: -12,
+    right: -12,
+    minWidth: 26,
+    height: 26,
+    borderRadius: 13,
+    paddingHorizontal: 6,
+    backgroundColor: BADGE,
+    borderWidth: 2,
     borderColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shutterBusy: { opacity: 0.6 },
-  shutterInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  doneBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 14,
-    height: 44,
-    borderRadius: 22,
-  },
-  doneText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  trayBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  tray: {
-    maxHeight: '75%',
-    backgroundColor: '#181B20',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingTop: 8,
-  },
-  trayHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 16, paddingRight: 4 },
-  trayTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  trayGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingHorizontal: 16, paddingVertical: 8 },
-  trayItem: { width: '30%', aspectRatio: 0.75, borderRadius: 8, overflow: 'hidden', backgroundColor: '#262A31' },
-  trayImg: { width: '100%', height: '100%' },
-  trayNum: {
-    position: 'absolute',
-    left: 4,
-    bottom: 4,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 4,
-    paddingHorizontal: 5,
-  },
-  trayNumText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
-  trayDelete: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(220,53,69,0.9)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  trayActions: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 8 },
-  trayBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: 46,
-    borderRadius: 10,
-  },
-  trayBtnGhost: { backgroundColor: '#262A31' },
-  trayBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  badgeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  menuBackdrop: { flex: 1 },
+  menu: { position: 'absolute', right: 12, backgroundColor: '#26272B', borderRadius: 10, paddingVertical: 4, minWidth: 200 },
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 8 },
+  menuText: { color: '#FFFFFF', fontSize: 15, flex: 1 },
 });

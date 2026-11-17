@@ -8,6 +8,50 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { useSettingsStore } from './useSettingsStore';
 import { formatDocumentName } from '@/core/utils/docName';
 import { GalleryService } from '@/services/storage/GalleryService';
+import * as FileSystem from 'expo-file-system/legacy';
+
+type Corners = { x: number; y: number }[];
+
+/** One page from the editor, ready to be stored. */
+export interface EditedPageInput {
+  originalUri: string;
+  previewUri?: string;
+  /** Uncropped capture and the crop on it, kept so the page can be re-cropped later. */
+  sourceUri?: string;
+  corners?: Corners | null;
+  rotation?: PageRotation;
+  filter?: PageFilter;
+  adjust?: PageAdjust | null;
+  /** OCR text to keep when the page image did not change. */
+  ocrText?: string | null;
+}
+
+/** Copies a page's files into the document folder and returns its database row. */
+async function storePage(docId: string, pageId: string, position: number, img: EditedPageInput, fallbackFilter: PageFilter): Promise<Page> {
+  const origPath = await StorageService.saveOriginalImage(docId, pageId, img.originalUri);
+  const filter = img.filter || fallbackFilter;
+  const transformed = await ImageService.transformPage(origPath, 0, filter, 'medium');
+  const procPath = await StorageService.saveProcessedImage(docId, pageId, transformed);
+  let sourcePath: string | null = null;
+  if (img.sourceUri && img.sourceUri !== img.originalUri) {
+    sourcePath = await StorageService.saveSourceImage(docId, pageId, img.sourceUri);
+  } else if (img.sourceUri) {
+    sourcePath = origPath;
+  }
+  return {
+    id: pageId,
+    document_id: docId,
+    position,
+    original_path: origPath,
+    processed_path: procPath,
+    filter,
+    adjust: img.adjust ?? null,
+    source_path: sourcePath,
+    corners: sourcePath && sourcePath !== origPath ? img.corners ?? null : null,
+    rotation: img.rotation || 0,
+    ocr_text: img.ocrText ?? null,
+  };
+}
 
 export type SortOption = 'newest' | 'oldest' | 'nameAsc' | 'nameDesc';
 
@@ -36,7 +80,7 @@ interface DocumentState {
     title: string | null,
     images: (
       | { uri: string }
-      | { originalUri: string; previewUri: string; rotation?: PageRotation; filter?: PageFilter; adjust?: PageAdjust | null }
+      | EditedPageInput
     )[],
     folderId?: string | null,
     filter?: PageFilter
@@ -45,7 +89,7 @@ interface DocumentState {
   /** Appends edited pages to an existing document (the "Add" card on the document screen). */
   addPages: (
     documentId: string,
-    images: { originalUri: string; rotation?: PageRotation; filter?: PageFilter; adjust?: PageAdjust | null }[]
+    images: EditedPageInput[]
   ) => Promise<void>;
   /**
    * Replaces a saved page's image, e.g. after markup, signature or watermark. Returns the updated page.
@@ -53,6 +97,8 @@ interface DocumentState {
    * is then reset to the original filter and no rotation so they are not applied twice.
    */
   replacePageImage: (page: Page, newImageUri: string, options?: { baked?: boolean }) => Promise<Page>;
+  /** Saves a re-edited document: its pages are replaced by the edited list, in order. */
+  replaceDocumentPages: (documentId: string, title: string | null, images: EditedPageInput[]) => Promise<void>;
 
   /** Creates a new document from the pages of several documents, in the given order. Originals are kept. */
   mergeDocuments: (documentIds: string[], title: string) => Promise<Document>;
@@ -170,6 +216,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
       // Save original image to private storage (NFR-20)
       const origPath = await StorageService.saveOriginalImage(docId, pageId, origSource);
+      let sourcePath: string | null = null;
+      if (img.sourceUri && img.sourceUri !== origSource) sourcePath = await StorageService.saveSourceImage(docId, pageId, img.sourceUri);
+      else if (img.sourceUri) sourcePath = origPath;
 
       let procPath: string;
       if (img.previewUri && img.previewUri !== origSource) {
@@ -190,6 +239,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         processed_path: procPath,
         filter: pageFilter,
         adjust: img.adjust ?? null,
+        source_path: sourcePath,
+        corners: sourcePath && sourcePath !== origPath ? img.corners ?? null : null,
         rotation: pageRotation,
         ocr_text: null,
       });
@@ -260,21 +311,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
       const pageId = `page_${start + i + 1}_${Math.random().toString(36).substring(2, 6)}`;
-      const origPath = await StorageService.saveOriginalImage(documentId, pageId, img.originalUri);
-      const filter = img.filter || 'magic';
-      const transformed = await ImageService.transformPage(origPath, 0, filter, 'medium');
-      const procPath = await StorageService.saveProcessedImage(documentId, pageId, transformed);
-      added.push({
-        id: pageId,
-        document_id: documentId,
-        position: start + i,
-        original_path: origPath,
-        processed_path: procPath,
-        filter,
-        adjust: img.adjust ?? null,
-        rotation: img.rotation || 0,
-        ocr_text: null,
-      });
+      added.push(await storePage(documentId, pageId, start + i, img, 'magic'));
     }
     await DatabaseService.insertPages(added);
     // The old PDF no longer matches the pages
@@ -287,6 +324,37 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     await get().loadAll();
   },
 
+  replaceDocumentPages: async (documentId, title, images) => {
+    if (images.length === 0) throw new Error('At least one page is required');
+    const old = await DatabaseService.getPagesByDocumentId(documentId);
+    const stamp = Date.now().toString(36);
+    const next: Page[] = [];
+    for (let i = 0; i < images.length; i++) {
+      // New file names, so cached images of the old version are not shown
+      next.push(await storePage(documentId, `page_${i + 1}_${stamp}_${Math.random().toString(36).slice(2, 6)}`, i, images[i], 'magic'));
+    }
+    for (const p of old) await DatabaseService.deletePage(p.id);
+    await DatabaseService.insertPages(next);
+    // Remove files that no page uses any more
+    const keep = new Set(next.flatMap((p) => [p.original_path, p.processed_path, p.source_path].filter(Boolean) as string[]));
+    for (const p of old) {
+      for (const f of [p.original_path, p.processed_path, p.source_path]) {
+        if (f && !keep.has(f)) await FileSystem.deleteAsync(f, { idempotent: true }).catch(() => undefined);
+      }
+    }
+    const thumb = await ImageService.generateThumbnail(next[0].processed_path, next[0].rotation);
+    const docUpdates: Partial<Document> = {
+      page_count: next.length,
+      pdf_path: null,
+      updated_at: Date.now(),
+      thumbnail_path: await StorageService.saveThumbnail(documentId, thumb),
+    };
+    if (title && title.trim()) docUpdates.title = title.trim();
+    await DatabaseService.updateDocument(documentId, docUpdates);
+    set({ pendingScanImages: [] });
+    await get().loadAll();
+  },
+
   replacePageImage: async (page, newImageUri, options) => {
     // New file names, so cached images of the old version are not shown
     const name = `${page.id}_${Date.now()}`;
@@ -294,6 +362,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const transformed = await ImageService.transformPage(origPath, 0, page.filter, 'medium');
     const procPath = await StorageService.saveProcessedImage(page.document_id, name, transformed);
     const pageUpdates: Partial<Page> = { original_path: origPath, processed_path: procPath };
+    // The marked-up image replaces the crop, so there is nothing to re-crop from any more
+    pageUpdates.source_path = null;
+    pageUpdates.corners = null;
     if (options?.baked) {
       pageUpdates.filter = 'original';
       pageUpdates.adjust = null;
@@ -313,7 +384,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   mergeDocuments: async (documentIds, title) => {
-    const images: { originalUri: string; previewUri: string; rotation: PageRotation; filter: PageFilter; adjust?: PageAdjust | null }[] = [];
+    const images: EditedPageInput[] = [];
     let folderId: string | null = null;
     for (let i = 0; i < documentIds.length; i++) {
       const doc = await DatabaseService.getDocumentById(documentIds[i]);
@@ -326,6 +397,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           rotation: p.rotation,
           filter: p.filter,
           adjust: p.adjust,
+          // Keep the uncropped photo so merged pages can still be re-cropped from it
+          sourceUri: p.source_path || undefined,
+          corners: p.corners ?? null,
         });
       }
     }
