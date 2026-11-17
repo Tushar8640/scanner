@@ -8,6 +8,7 @@ import {
   Image,
   RefreshControl,
   BackHandler,
+  ActivityIndicator,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +18,7 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { Document } from '@/core/types';
 import { useScanActions } from '@/ui/hooks/useScanActions';
+import { usePdfActions } from '@/ui/hooks/usePdfActions';
 import { ScanFab } from '@/ui/components/ScanFab';
 import { AdBanner } from '@/ui/components/AdBanner';
 import type { TranslationKey } from '@/i18n';
@@ -45,6 +47,11 @@ function openFiles(action: 'search' | 'newFolder' | 'select') {
   router.navigate({ pathname: '/files', params: { [action]: String(Date.now()) } });
 }
 
+/** Opens Files with a banner asking which document to use for the tool. */
+function pickDocumentFor(toolAction: 'sign' | 'word') {
+  router.navigate({ pathname: '/files', params: { toolAction, toolAt: String(Date.now()) } });
+}
+
 export default function HomeScreen() {
   // The scan engine renders pages with their filters for sharing, printing and saving
   return (
@@ -58,7 +65,9 @@ function HomeContent() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const { t } = useSettingsStore();
-  const { busy, scanWithCamera, importImages } = useScanActions();
+  const { busy: scanBusy, scanWithCamera, importImages } = useScanActions();
+  const pdf = usePdfActions();
+  const busy = scanBusy || pdf.busy;
   const [recents, setRecents] = useState<Document[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const setTabBarHidden = useUiStore((s) => s.setTabBarHidden);
@@ -114,20 +123,16 @@ function HomeContent() {
     await loadRecents();
   };
 
+  // Most used first, like the reference app: capture and import, then the everyday conversions.
+  // Less frequent tools (Merge, QR, New Folder and the rest) stay one tap away under All Tools.
   const tools: QuickTool[] = [
     { key: 'scan', label: 'smartScan', icon: 'scan', tint: colors.primary, onPress: scanWithCamera },
     { key: 'import', label: 'importImages', icon: 'image', tint: '#3B82F6', onPress: importImages },
+    { key: 'pdfin', label: 'importPdf', icon: 'document-attach', tint: '#EF4444', onPress: () => pdf.importToEditor() },
     { key: 'id', label: 'idCard', icon: 'card', tint: colors.primary, onPress: () => router.push('/id-card') },
     { key: 'ocr', label: 'extractText', icon: 'text', tint: colors.primary, onPress: () => router.push('/extract-text') },
-    { key: 'qr', label: 'scanQr', icon: 'qr-code', tint: '#8B5CF6', onPress: () => router.push('/qr-scan') },
-    { key: 'merge', label: 'mergeDocs', icon: 'git-merge', tint: '#F59E0B', onPress: () => openFiles('select') },
-    {
-      key: 'folder',
-      label: 'createFolder',
-      icon: 'folder-open',
-      tint: '#3B82F6',
-      onPress: () => openFiles('newFolder'),
-    },
+    { key: 'word', label: 'toWord', icon: 'document-text', tint: '#2563EB', onPress: () => pickDocumentFor('word') },
+    { key: 'sign', label: 'sign', icon: 'create', tint: colors.primary, onPress: () => pickDocumentFor('sign') },
     { key: 'all', label: 'allTools', icon: 'apps', tint: '#10B981', onPress: () => router.navigate('/tools') },
   ];
 
@@ -216,7 +221,9 @@ function HomeContent() {
                   }}
                 >
                   <View style={[styles.thumb, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
-                    {doc.thumbnail_path ? (
+                    {doc.is_locked ? (
+                      <Ionicons name="lock-closed" size={24} color={colors.primary} />
+                    ) : doc.thumbnail_path ? (
                       <Image source={{ uri: doc.thumbnail_path }} style={styles.thumbImg} />
                     ) : (
                       <Ionicons name="document-text-outline" size={24} color={colors.textMuted} />
@@ -264,11 +271,20 @@ function HomeContent() {
       )}
 
       {selecting ? <DocSelectionBar docs={chosen} onDone={finish} /> : <ScanFab />}
+
+      {pdf.busy && (
+        <View style={styles.busyOverlay}>
+          <ActivityIndicator size="large" color="#FFFFFF" />
+          <Text style={styles.busyText}>{t('importingPdf')}</Text>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  busyOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  busyText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
   container: {
     flex: 1,
   },

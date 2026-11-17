@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { usePremiumStore } from '@/store/usePremiumStore';
 import { AuthGate } from '@/ui/components/AuthGate';
+import { PromptHost } from '@/ui/components/PromptHost';
 import { useThemeColors } from '@/core/theme/colors';
 
 export default function RootLayout() {
@@ -34,6 +35,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <AuthGate />
+      <PromptHost />
       {startupError ? (
         <View style={[styles.errorBanner, { backgroundColor: colors.dangerLight, borderColor: colors.danger }]}>
           <Text style={[styles.errorText, { color: colors.danger }]}>

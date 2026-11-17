@@ -183,3 +183,38 @@ export class SecurityService {
     return result.success ? 'success' : 'failed';
   }
 }
+
+// Locked documents and folders opened in this session (cleared when the app locks again)
+const unlockedIds = new Set<string>();
+
+export const ItemLock = {
+  isUnlocked(id: string): boolean {
+    return unlockedIds.has(id);
+  },
+  forgetAll(): void {
+    unlockedIds.clear();
+  },
+  /**
+   * Asks for the fingerprint/face or the app PIN to open a locked document or folder.
+   * 'nopin' means no app PIN is set yet, so nothing can be locked or unlocked.
+   */
+  async unlock(id: string, ask: (message?: string) => Promise<string | null>, prompt: string): Promise<'ok' | 'cancel' | 'nopin'> {
+    if (unlockedIds.has(id)) return 'ok';
+    if (!(await SecurityService.hasPin())) return 'nopin';
+    if ((await SecurityService.authenticateWithBiometrics(prompt)) === 'success') {
+      unlockedIds.add(id);
+      return 'ok';
+    }
+    let message: string | undefined;
+    for (;;) {
+      const pin = await ask(message);
+      if (pin == null) return 'cancel';
+      const res = await SecurityService.verifyPin(pin);
+      if (res.success) {
+        unlockedIds.add(id);
+        return 'ok';
+      }
+      message = res.lockedOut ? `Too many attempts. Try again in ${res.lockoutRemainingSeconds}s.` : 'Wrong PIN';
+    }
+  },
+};

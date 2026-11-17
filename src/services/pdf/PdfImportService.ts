@@ -1,6 +1,8 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { isPdfSupported, renderPages } from '../../../modules/pdf-pages';
 import { SecurityService } from '../security/SecurityService';
+import { askText } from '@/ui/components/PromptHost';
+import { useSettingsStore } from '@/store/useSettingsStore';
 
 export interface ImportedPdf {
   /** File name without the .pdf extension, used as the document title. */
@@ -11,6 +13,25 @@ export interface ImportedPdf {
 
 /** Long edge of each rendered page in pixels; sharp enough to read and re-print. */
 const PAGE_MAX_SIDE = 2000;
+
+/** Renders a PDF, asking for its password when it is protected (and again if the password is wrong). */
+async function renderWithPassword(uri: string, name: string): Promise<string[] | null> {
+  const { t } = useSettingsStore.getState();
+  let password = '';
+  let message = t('pdfPasswordMsg').replace('{name}', name);
+  for (;;) {
+    try {
+      return await renderPages(uri, PAGE_MAX_SIDE, 90, password);
+    } catch (e: any) {
+      const code = String(e?.code ?? '');
+      if (code !== 'PDF_PASSWORD' && code !== 'PDF_WRONG_PASSWORD') throw e;
+      if (code === 'PDF_WRONG_PASSWORD') message = t('pdfWrongPassword');
+      const entered = await askText({ title: t('pdfPasswordTitle'), message, secure: true, placeholder: t('password') });
+      if (entered == null) return null; // cancelled: skip this file
+      password = entered;
+    }
+  }
+}
 
 export const PdfImportService = {
   isSupported: isPdfSupported,
@@ -27,9 +48,10 @@ export const PdfImportService = {
     if (res.canceled || !res.assets?.length) return null;
     const out: ImportedPdf[] = [];
     for (const asset of res.assets) {
-      const pages = await renderPages(asset.uri, PAGE_MAX_SIDE, 90);
-      if (pages.length) out.push({ name: asset.name.replace(/\.pdf$/i, ''), pages });
+      const name = asset.name.replace(/\.pdf$/i, '');
+      const pages = await renderWithPassword(asset.uri, name);
+      if (pages?.length) out.push({ name, pages });
     }
-    return out;
+    return out.length ? out : null;
   },
 };

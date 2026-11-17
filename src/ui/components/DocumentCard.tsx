@@ -52,7 +52,12 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
     />
   );
 
-  const thumb = document.thumbnail_path ? (
+  // Locked documents never show their content in lists
+  const thumb = document.is_locked ? (
+    <View style={styles.thumbPlaceholder}>
+      <Ionicons name="lock-closed" size={26} color={colors.primary} />
+    </View>
+  ) : document.thumbnail_path ? (
     <Image source={{ uri: document.thumbnail_path }} style={styles.thumbImg} resizeMode="cover" />
   ) : (
     <View style={styles.thumbPlaceholder}>

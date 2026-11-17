@@ -1,5 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Platform,
+  Switch,
   View,
   Text,
   StyleSheet,
@@ -18,6 +20,12 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Document, Page, PageRotation, PdfPageSize, PdfQuality } from '@/core/types';
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { PdfCompression, PdfService } from '@/services/pdf/PdfService';
+import { askText } from '@/ui/components/PromptHost';
+import { useItemLock } from '@/ui/hooks/useItemLock';
+import { ItemLock } from '@/services/security/SecurityService';
+import { pinShortcut, protectPdf } from '../../../modules/pdf-pages';
+import { DocxService } from '@/services/export/DocxService';
+import { TagsModal } from '@/ui/components/TagsModal';
 import { GalleryService } from '@/services/storage/GalleryService';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
@@ -51,7 +59,7 @@ function safeFileName(title: string): string {
 }
 
 function DocumentDetail() {
-  const { id, action } = useLocalSearchParams<{ id: string; action?: AnnotateMode | 'pdf' | 'split' }>();
+  const { id, action } = useLocalSearchParams<{ id: string; action?: AnnotateMode | 'pdf' | 'split' | 'erase' | 'word' | 'protect' | 'compress' }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const engine = useScanEngine();
@@ -67,18 +75,40 @@ function DocumentDetail() {
   const [gridDragging, setGridDragging] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   // `uri` is the page rendered with its filter and rotation, so the editor shows what the user sees
-  const [annotate, setAnnotate] = useState<{ mode: AnnotateMode; page: Page; uri: string } | null>(null);
+  const [annotate, setAnnotate] = useState<{ mode: AnnotateMode; page: Page; uri: string; eraser?: boolean } | null>(null);
+  // Tools > To Word: export once the document has loaded
+  const wordPendingRef = useRef(false);
   const [viewerHint, setViewerHint] = useState<string | null>(null);
   const [sheet, setSheet] = useState<'more' | 'share' | 'add' | 'compress' | null>(null);
   const [pdfModalVisible, setPdfModalVisible] = useState(false);
   const [pageSize, setPageSize] = useState<PdfPageSize>(default_page_size);
   const [quality, setQuality] = useState<PdfQuality>(default_quality);
+  // PDF export options: invisible OCR text (searchable) and an opening password
+  const [pdfSearchable, setPdfSearchable] = useState(true);
+  const [pdfProtect, setPdfProtect] = useState(false);
   const [renameVisible, setRenameVisible] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const [moveVisible, setMoveVisible] = useState(false);
   const actionHandledRef = useRef(false);
   // Split mode: ids of the pages chosen for the new document (null when not splitting)
   const [splitSelection, setSplitSelection] = useState<string[] | null>(null);
+  const [tagsVisible, setTagsVisible] = useState(false);
+  // Locked documents stay hidden until the fingerprint or app PIN is given
+  const { unlock } = useItemLock();
+  const [unlocked, setUnlocked] = useState(false);
+  const lockedNow = !!document?.is_locked && !unlocked && !ItemLock.isUnlocked(document.id);
+  const lockPromptRef = useRef(false);
+  useEffect(() => {
+    if (!lockedNow || !document || lockPromptRef.current) return;
+    lockPromptRef.current = true;
+    unlock(document.id).then((ok) => {
+      lockPromptRef.current = false;
+      if (ok) setUnlocked(true);
+      else router.back();
+    });
+    // unlock is recreated each render; the ref stops repeat prompts
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedNow, document?.id]);
 
   const reload = useCallback(async () => {
     if (!id) return;
@@ -92,13 +122,20 @@ function DocumentDetail() {
         actionHandledRef.current = true;
         if (action === 'pdf') {
           setPdfModalVisible(true);
+        } else if (action === 'compress') {
+          setSheet('compress');
+        } else if (action === 'protect') {
+          setPdfProtect(true);
+          setPdfModalVisible(true);
+        } else if (action === 'word') {
+          wordPendingRef.current = true;
         } else if (action === 'split') {
           setSplitSelection([]);
         } else if (action === 'sign' && list.length > 1) {
           // Let the user pick which page to sign
           setViewerHint(t('signPickPage'));
           setViewerIndex(list.length - 1);
-        } else if (action === 'sign' || action === 'watermark' || action === 'markup') {
+        } else if (action === 'sign' || action === 'watermark' || action === 'markup' || action === 'erase') {
           const page = list[0];
           setLoading(false);
           setBusyText(t('processing'));
@@ -109,7 +146,8 @@ function DocumentDetail() {
               page.adjust,
               page.rotation
             );
-            setAnnotate({ mode: action, page, uri });
+            // Tools > Eraser opens markup with the eraser already picked
+            setAnnotate(action === 'erase' ? { mode: 'markup', page, uri, eraser: true } : { mode: action, page, uri });
           } finally {
             setBusyText(null);
           }
@@ -144,7 +182,7 @@ function DocumentDetail() {
       const info = await FileSystem.getInfoAsync(document.pdf_path);
       if (info.exists) return document.pdf_path;
     }
-    const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality, renderPage: renderPdfPage });
+    const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality, renderPage: renderPdfPage, searchable: true });
     await DatabaseService.updateDocument(document.id, { pdf_path: path });
     setDocument((prev) => (prev ? { ...prev, pdf_path: path } : prev));
     return path;
@@ -160,6 +198,26 @@ function DocumentDetail() {
       setBusyText(null);
     }
   };
+
+  /** Word file from the document text (OCR), then the share sheet. */
+  const exportWordFor = (doc: NonNullable<typeof document>) =>
+    withBusy(t('readingText'), async () => {
+      const file = await DocxService.fromDocuments([doc], renderPdfPage, doc.title);
+      setBusyText(null);
+      if (!file) {
+        Alert.alert(t('exportWord'), t('wordNoText'));
+        return;
+      }
+      await PdfService.shareFile(file, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', `${safeFileName(doc.title)}.docx`);
+    });
+
+  useEffect(() => {
+    if (!wordPendingRef.current || !document || lockedNow) return;
+    wordPendingRef.current = false;
+    exportWordFor(document);
+    // Runs once when the document is ready; exportWordFor is recreated each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [document, lockedNow]);
 
   const sharePdf = () =>
     withBusy(t('generating'), async () => {
@@ -287,12 +345,26 @@ function DocumentDetail() {
       Alert.alert(t('success'), t('savedToGallery').replace('{n}', String(n)));
     });
 
-  const generatePdfWithOptions = () =>
-    withBusy(t('generating'), async () => {
+  const generatePdfWithOptions = async () => {
+    // Ask for the password first, before the slow part
+    let password: string | null = null;
+    if (pdfProtect) {
+      password = await askText({ title: t('setPdfPassword'), message: t('setPdfPasswordMsg'), secure: true, placeholder: t('password') });
+      if (!password) return;
+    }
+    await withBusy(t('generating'), async () => {
       if (!document || pages.length === 0) return;
-      const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality, renderPage: renderPdfPage });
+      let path = await PdfService.generatePdf(document.id, pages, {
+        title: document.title,
+        pageSize,
+        quality,
+        renderPage: renderPdfPage,
+        searchable: pdfSearchable,
+      });
       await DatabaseService.updateDocument(document.id, { pdf_path: path });
       setDocument((prev) => (prev ? { ...prev, pdf_path: path } : prev));
+      // The protected copy is only for this export; the saved PDF stays open for sharing in the app
+      if (password) path = await protectPdf(path, password);
       setPdfModalVisible(false);
       setBusyText(null);
       AdsService.maybeShowInterstitial('after_export');
@@ -310,6 +382,7 @@ function DocumentDetail() {
         { text: t('cancel'), style: 'cancel' },
       ]);
     });
+  };
 
   const addPages = (source: 'camera' | 'gallery') => {
     if (!document) return;
@@ -427,6 +500,35 @@ function DocumentDetail() {
     );
   }
 
+  if (lockedNow) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.background, gap: 14, padding: 32 }]}>
+        <Ionicons name="lock-closed" size={48} color={colors.primary} />
+        <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>{t('docLocked')}</Text>
+        <ActionButton
+          title={t('unlockToOpen')}
+          onPress={() => unlock(document.id).then((ok) => ok && setUnlocked(true))}
+        />
+      </View>
+    );
+  }
+
+  const toggleLock = async () => {
+    const locking = !document.is_locked;
+    // Removing a lock needs the PIN; adding one needs a PIN to exist
+    const ok = await unlock(document.id);
+    if (!ok) return;
+    await useDocumentStore.getState().setDocumentsLocked([document.id], locking);
+    setDocument((prev) => (prev ? { ...prev, is_locked: locking ? 1 : 0 } : prev));
+  };
+
+  const exportWord = () => exportWordFor(document);
+
+  const addShortcut = async () => {
+    const ok = await pinShortcut(document.id, document.title, document.thumbnail_path || '', `scanner://document/${document.id}`);
+    Alert.alert(t('addToHome'), ok ? t('shortcutAdded') : t('shortcutUnsupported'));
+  };
+
   const moreItems: ActionSheetItem[] = [
     { key: 'rename', label: t('rename'), icon: 'create-outline', onPress: () => setRenameVisible(true) },
     { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveVisible(true) },
@@ -435,6 +537,10 @@ function DocumentDetail() {
     ...(pages.length > 1
       ? [{ key: 'split', label: t('splitPages'), icon: 'cut-outline' as const, onPress: () => setSplitSelection([]) }]
       : []),
+    { key: 'word', label: t('exportWord'), icon: 'document-outline', onPress: exportWord },
+    { key: 'tags', label: t('tags'), icon: 'pricetag-outline', onPress: () => setTimeout(() => setTagsVisible(true), 250) },
+    { key: 'lock', label: document.is_locked ? t('unlockDoc') : t('lockDoc'), icon: document.is_locked ? 'lock-open-outline' : 'lock-closed-outline', onPress: toggleLock },
+    ...(Platform.OS === 'android' ? [{ key: 'home', label: t('addToHome'), icon: 'phone-portrait-outline' as const, onPress: addShortcut }] : []),
     { key: 'delete', label: t('delete'), icon: 'trash-outline', destructive: true, onPress: deleteDocument },
   ];
   const shareItems: ActionSheetItem[] = [
@@ -458,6 +564,7 @@ function DocumentDetail() {
     <AnnotateModal
       visible
       mode={annotate.mode}
+      initialTool={annotate.eraser ? 'eraser' : undefined}
       imageUri={annotate.uri}
       onClose={() => setAnnotate(null)}
       otherPages={
@@ -612,6 +719,7 @@ function DocumentDetail() {
         onClose={() => setSheet(null)}
       />
       <ActionSheet visible={sheet === 'add'} title={t('addPage')} items={addItems} onClose={() => setSheet(null)} />
+      <TagsModal visible={tagsVisible} documentIds={[document.id]} onClose={() => setTagsVisible(false)} />
 
       {/* Page viewer with per-page tools */}
       <Modal visible={viewerPage !== null} animationType="fade" onRequestClose={() => { setViewerIndex(null); setViewerHint(null); }} statusBarTranslucent>
@@ -734,6 +842,20 @@ function DocumentDetail() {
                 </TouchableOpacity>
               ))}
             </View>
+            <View style={styles.optionRow}>
+              <View style={styles.flex1}>
+                <Text style={[styles.optionTitle, { color: colors.text }]}>{t('searchablePdf')}</Text>
+                <Text style={[styles.optionDesc, { color: colors.textSecondary }]}>{t('searchablePdfDesc')}</Text>
+              </View>
+              <Switch value={pdfSearchable} onValueChange={setPdfSearchable} trackColor={{ true: colors.primary }} />
+            </View>
+            <View style={styles.optionRow}>
+              <View style={styles.flex1}>
+                <Text style={[styles.optionTitle, { color: colors.text }]}>{t('protectPdf')}</Text>
+                <Text style={[styles.optionDesc, { color: colors.textSecondary }]}>{t('protectPdfDesc')}</Text>
+              </View>
+              <Switch value={pdfProtect} onValueChange={setPdfProtect} trackColor={{ true: colors.primary }} />
+            </View>
             <View style={[styles.watermarkBadge, { backgroundColor: colors.successLight }]}>
               <Ionicons name="shield-checkmark" size={16} color={colors.success} />
               <Text style={[styles.watermarkText, { color: colors.success }]}>{t('noWatermark')}</Text>
@@ -831,6 +953,9 @@ function formatBytes(n: number): string {
 }
 
 const styles = StyleSheet.create({
+  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14 },
+  optionTitle: { fontSize: 15, fontWeight: '600' },
+  optionDesc: { fontSize: 12, marginTop: 2 },
   splitCheck: {
     position: 'absolute',
     top: 8,

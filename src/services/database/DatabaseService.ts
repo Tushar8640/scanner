@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { Document, Folder, Page } from '@/core/types';
+import { Document, Folder, Page, Tag } from '@/core/types';
 import { isDefaultAdjust, normaliseAdjust } from '@/services/image/FilterUtils';
 
 /** Reads crop corners stored as JSON; anything malformed counts as "no crop". */
@@ -89,6 +89,23 @@ export class DatabaseService {
     } catch {
       // column already exists
     }
+    try {
+      await db.execAsync('ALTER TABLE documents ADD COLUMN is_locked INTEGER DEFAULT 0;');
+    } catch {
+      // column already exists
+    }
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS document_tags (
+        document_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY (document_id, tag_id)
+      );
+    `);
     for (const col of ['source_path', 'corners']) {
       try {
         await db.execAsync(`ALTER TABLE pages ADD COLUMN ${col} TEXT NULL;`);
@@ -142,6 +159,7 @@ export class DatabaseService {
     'thumbnail_path',
     'ocr_text',
     'deleted_at',
+    'is_locked',
     'created_at',
     'updated_at',
   ]);
@@ -197,6 +215,43 @@ export class DatabaseService {
       'INSERT INTO folders (id, name, parent_id, is_locked, created_at) VALUES (?, ?, ?, ?, ?)',
       [folder.id, folder.name, folder.parent_id, folder.is_locked, folder.created_at]
     );
+  }
+
+  static async setFolderLocked(folderId: string, locked: boolean): Promise<void> {
+    const db = await this.getDb();
+    await db.runAsync('UPDATE folders SET is_locked = ? WHERE id = ?', [locked ? 1 : 0, folderId]);
+  }
+
+  // --- Tags ---
+  static async getTags(): Promise<Tag[]> {
+    const db = await this.getDb();
+    return await db.getAllAsync<Tag>('SELECT * FROM tags ORDER BY name COLLATE NOCASE ASC');
+  }
+
+  static async createTag(tag: Tag): Promise<void> {
+    const db = await this.getDb();
+    await db.runAsync('INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)', [tag.id, tag.name, tag.created_at]);
+  }
+
+  static async deleteTag(tagId: string): Promise<void> {
+    const db = await this.getDb();
+    await db.runAsync('DELETE FROM document_tags WHERE tag_id = ?', [tagId]);
+    await db.runAsync('DELETE FROM tags WHERE id = ?', [tagId]);
+  }
+
+  static async setDocumentTag(documentId: string, tagId: string, on: boolean): Promise<void> {
+    const db = await this.getDb();
+    if (on) await db.runAsync('INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)', [documentId, tagId]);
+    else await db.runAsync('DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?', [documentId, tagId]);
+  }
+
+  /** document id -> tag ids */
+  static async getDocumentTagMap(): Promise<Record<string, string[]>> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<{ document_id: string; tag_id: string }>('SELECT document_id, tag_id FROM document_tags');
+    const map: Record<string, string[]> = {};
+    for (const r of rows) (map[r.document_id] ??= []).push(r.tag_id);
+    return map;
   }
 
   static async deleteFolder(folderId: string): Promise<void> {

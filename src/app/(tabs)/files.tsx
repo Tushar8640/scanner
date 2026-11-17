@@ -26,6 +26,7 @@ import { ScanFab } from '@/ui/components/ScanFab';
 import { ScanEngineProvider } from '@/ui/components/ScanEngine';
 import { DocSelectionBar } from '@/ui/components/DocSelectionBar';
 import { useUiStore } from '@/store/useUiStore';
+import { useItemLock } from '@/ui/hooks/useItemLock';
 import { AdBanner } from '@/ui/components/AdBanner';
 import { useScanActions } from '@/ui/hooks/useScanActions';
 import { useThemeColors } from '@/core/theme/colors';
@@ -45,7 +46,7 @@ export default function FilesScreen() {
 function FilesContent() {
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
-  const params = useLocalSearchParams<{ search?: string; newFolder?: string; select?: string; toolAction?: 'sign' | 'watermark' | 'pdf' }>();
+  const params = useLocalSearchParams<{ search?: string; newFolder?: string; select?: string; selectFor?: 'lock' | 'tags'; toolAt?: string; toolAction?: 'sign' | 'watermark' | 'pdf' | 'erase' | 'word' | 'protect' }>();
   const {
     documents,
     folders,
@@ -81,7 +82,8 @@ function FilesContent() {
   const [selected, setSelected] = useState<string[]>([]);
   // Selection was opened from the Merge tool
   const [mergeIntent, setMergeIntent] = useState(false);
-  const [activeToolAction, setActiveToolAction] = useState<'sign' | 'watermark' | 'pdf' | null>(null);
+  const [selectFor, setSelectFor] = useState<'lock' | 'tags' | null>(null);
+  const [activeToolAction, setActiveToolAction] = useState<'sign' | 'watermark' | 'pdf' | 'erase' | 'word' | 'protect' | null>(null);
 
   // Deep links from Home: focus search, or open "Create Folder"
   useEffect(() => {
@@ -94,14 +96,19 @@ function FilesContent() {
     if (params.select)
       setTimeout(() => {
         setSelectMode(true);
+        // Merge by default; Tools > Lock Docs / Tags reuse selection with their own hint
+        setSelectFor(params.selectFor ?? null);
         setMergeIntent(true);
       }, 0);
+    // selectFor arrives together with select
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.select]);
   useEffect(() => {
     if (params.toolAction) {
       setTimeout(() => setActiveToolAction(params.toolAction ?? null), 0);
     }
-  }, [params.toolAction]);
+    // toolAt changes on every tap, so picking the same tool twice still shows the banner
+  }, [params.toolAction, params.toolAt]);
 
   const exitSelect = () => {
     setSelectMode(false);
@@ -164,7 +171,19 @@ function FilesContent() {
     }
   };
 
-  const handleFolderOptions = (folder: Folder) => {
+  const { unlock } = useItemLock();
+  const { setFolderLocked, tags, docTags } = useDocumentStore();
+  // Tag filter chip; null shows every document
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const visibleDocs = tagFilter ? documents.filter((d) => docTags[d.id]?.includes(tagFilter)) : documents;
+
+  /** Locked folders open only after the fingerprint or app PIN. */
+  const openFolder = async (folder: Folder) => {
+    if (folder.is_locked && !(await unlock(folder.id))) return;
+    setActiveFolderId(folder.id);
+  };
+
+  const deleteFolderConfirm = (folder: Folder) =>
     Alert.alert(t('deleteFolder'), `"${folder.name}"? ${t('deleteFolderConfirm')}`, [
       { text: t('cancel'), style: 'cancel' },
       {
@@ -175,6 +194,19 @@ function FilesContent() {
           await deleteFolder(folder.id);
         },
       },
+    ]);
+
+  const handleFolderOptions = (folder: Folder) => {
+    Alert.alert(folder.name, undefined, [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: folder.is_locked ? t('unlockDoc') : t('lockDoc'),
+        onPress: async () => {
+          if (!(await unlock(folder.id))) return;
+          await setFolderLocked(folder.id, !folder.is_locked);
+        },
+      },
+      { text: t('delete'), style: 'destructive', onPress: () => deleteFolderConfirm(folder) },
     ]);
   };
 
@@ -198,6 +230,13 @@ function FilesContent() {
           },
         },
         { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveIds([docSheetTarget.id]) },
+        {
+          key: 'compress',
+          label: t('compressPdf'),
+          icon: 'contract-outline',
+          // Opens the document with the Compress PDF choices showing
+          onPress: () => router.push({ pathname: '/document/[id]', params: { id: docSheetTarget.id, action: 'compress' } }),
+        },
         {
           key: 'delete',
           label: t('delete'),
@@ -250,12 +289,12 @@ function FilesContent() {
             <Text style={[styles.listTitle, { color: colors.text }]} numberOfLines={1}>
               {activeFolder.name}
             </Text>
-            <Text style={[styles.listCount, { color: colors.textMuted }]}> ({documents.length})</Text>
+            <Text style={[styles.listCount, { color: colors.textMuted }]}> ({visibleDocs.length})</Text>
           </TouchableOpacity>
         ) : (
           <View style={styles.crumb}>
             <Text style={[styles.listTitle, { color: colors.text }]}>{searching ? t('search') : t('all')}</Text>
-            <Text style={[styles.listCount, { color: colors.textMuted }]}> ({documents.length})</Text>
+            <Text style={[styles.listCount, { color: colors.textMuted }]}> ({visibleDocs.length})</Text>
           </View>
         )}
         {selectMode ? (
@@ -287,16 +326,35 @@ function FilesContent() {
       </View>
 
       {/* Folders (only at the top level) */}
+      {/* Tag filter */}
+      {tags.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagRow} style={{ backgroundColor: colors.surface }}>
+          {[{ id: null as string | null, name: t('allTags') }, ...tags].map((tag) => {
+            const on = tagFilter === tag.id;
+            return (
+              <TouchableOpacity
+                key={tag.id ?? 'all'}
+                style={[styles.tagChip, { backgroundColor: on ? colors.primary : colors.surfaceVariant }]}
+                onPress={() => setTagFilter(tag.id)}
+              >
+                {tag.id && <Ionicons name="pricetag-outline" size={13} color={on ? '#FFFFFF' : colors.textSecondary} />}
+                <Text style={[styles.tagText, { color: on ? '#FFFFFF' : colors.text }]}>{tag.name}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
       {!activeFolder && !searching && folders.length > 0 && (
         <View style={[styles.folderList, { backgroundColor: colors.surface }]}>
           {folders.map((f) => (
             <TouchableOpacity
               key={f.id}
               style={[styles.folderRow, { backgroundColor: colors.surfaceVariant }]}
-              onPress={() => setActiveFolderId(f.id)}
+              onPress={() => openFolder(f)}
               onLongPress={() => handleFolderOptions(f)}
             >
-              <Ionicons name="folder" size={34} color={colors.primary} />
+              <Ionicons name={f.is_locked ? 'lock-closed' : 'folder'} size={34} color={colors.primary} />
               <Text style={[styles.folderName, { color: colors.text }]} numberOfLines={1}>
                 {f.name}
               </Text>
@@ -335,9 +393,9 @@ function FilesContent() {
 
       {selectMode && mergeIntent && (
         <View style={[styles.toolBanner, { backgroundColor: colors.primary }]}>
-          <Ionicons name="git-merge" size={20} color="#FFFFFF" />
+          <Ionicons name={selectFor === 'lock' ? 'lock-closed' : selectFor === 'tags' ? 'pricetag' : 'git-merge'} size={20} color="#FFFFFF" />
           <Text style={styles.toolBannerText} numberOfLines={2}>
-            {t('mergeHint')}
+            {t(selectFor === 'lock' ? 'lockHint' : selectFor === 'tags' ? 'tagsHint' : 'mergeHint')}
           </Text>
         </View>
       )}
@@ -346,7 +404,19 @@ function FilesContent() {
       {activeToolAction && (
         <View style={[styles.toolBanner, { backgroundColor: colors.primary }]}>
           <Ionicons
-            name={activeToolAction === 'sign' ? 'create' : activeToolAction === 'watermark' ? 'water' : 'document'}
+            name={
+              activeToolAction === 'sign'
+                ? 'create'
+                : activeToolAction === 'watermark'
+                ? 'water'
+                : activeToolAction === 'erase'
+                ? 'bandage'
+                : activeToolAction === 'word'
+                ? 'document-text'
+                : activeToolAction === 'protect'
+                ? 'shield-checkmark'
+                : 'document'
+            }
             size={20}
             color="#FFFFFF"
           />
@@ -355,6 +425,12 @@ function FilesContent() {
               ? 'Select a document to sign'
               : activeToolAction === 'watermark'
               ? 'Select a document to add watermark'
+              : activeToolAction === 'erase'
+              ? 'Select a document to erase marks'
+              : activeToolAction === 'word'
+              ? 'Select a document to export as Word'
+              : activeToolAction === 'protect'
+              ? 'Select a document to protect with a password'
               : 'Select a document to export as PDF'}
           </Text>
           <TouchableOpacity onPress={() => setActiveToolAction(null)} hitSlop={10}>
@@ -365,7 +441,7 @@ function FilesContent() {
 
       <FlatList
         key={viewMode}
-        data={documents}
+        data={visibleDocs}
         numColumns={viewMode === 'grid' ? 3 : 1}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={header}
@@ -537,6 +613,9 @@ function FilesContent() {
 }
 
 const styles = StyleSheet.create({
+  tagRow: { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
+  tagChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, height: 32, borderRadius: 16 },
+  tagText: { fontSize: 13, fontWeight: '600' },
   selectTitle: {
     fontSize: 18,
     fontWeight: '700',

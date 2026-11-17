@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSettingsStore } from '@/store/useSettingsStore';
-import { SecurityService } from '@/services/security/SecurityService';
+import { SecurityService, ItemLock } from '@/services/security/SecurityService';
 import { useThemeColors } from '@/core/theme/colors';
 
 /** Time in the background before the app asks for the PIN again. */
@@ -39,6 +39,8 @@ export const AuthGate: React.FC = () => {
         if (since && s.app_lock_enabled && s.isAuthenticated && Date.now() - since >= RELOCK_AFTER_MS) {
           setPin('');
           setErrorMsg('');
+          // Locked documents and folders need unlocking again too
+          ItemLock.forgetAll();
           s.setIsAuthenticated(false);
         }
       }

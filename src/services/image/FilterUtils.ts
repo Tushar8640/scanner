@@ -64,10 +64,12 @@ export interface PageMarkupOptions {
   filter: PageFilter;
   rotation?: number;
   isForPdf?: boolean;
+  /** Extra markup placed over the image, e.g. an invisible OCR text layer. */
+  overlay?: string;
 }
 
 export function generatePageMarkup(options: PageMarkupOptions): string {
-  const { base64, filter, rotation = 0, isForPdf = false } = options;
+  const { base64, filter, rotation = 0, isForPdf = false, overlay = '' } = options;
   const imgSrc = `data:image/jpeg;base64,${base64}`;
   const recipe = getFilterRecipe(filter);
   const dodge = recipe.dodgeOpacity > 0;
@@ -77,6 +79,7 @@ export function generatePageMarkup(options: PageMarkupOptions): string {
       <div class="dodge-clip" style="display: ${dodge ? 'block' : 'none'};">
         <img class="doc-dodge" src="${imgSrc}" style="filter: invert(100%) blur(${recipe.blurPx}px) grayscale(100%); opacity: ${recipe.dodgeOpacity};" alt="" />
       </div>
+      ${overlay}
     </div>
   `;
 }

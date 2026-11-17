@@ -44,6 +44,14 @@ export interface Document {
   deleted_at: number | null; // for trash support (FR-36)
   created_at: number; // timestamp in ms
   updated_at: number; // timestamp in ms
+  /** 1 when opening the document needs the app PIN or fingerprint. */
+  is_locked?: number;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  created_at: number;
 }
 
 export interface Page {

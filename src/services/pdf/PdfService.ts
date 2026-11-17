@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Image, Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -7,6 +7,30 @@ import { StorageService } from '../storage/StorageService';
 import { ImageService } from '../image/ImageService';
 import { generatePageMarkup } from '../image/FilterUtils';
 import { SecurityService } from '../security/SecurityService';
+import { OcrService, OcrLine } from '../ocr/OcrService';
+
+const xmlEscape = (v: string) =>
+  v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+function imageSize(uri: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => Image.getSize(uri, (width, height) => resolve({ width, height }), reject));
+}
+
+/**
+ * Invisible text over the page image, placed where OCR found each line. PDF viewers can then
+ * search and copy the text while the page still looks exactly like the scan.
+ */
+function textLayer(lines: OcrLine[], width: number, height: number): string {
+  if (!lines.length) return '';
+  const items = lines
+    .map((l) => {
+      const f = l.frame;
+      const size = Math.max(1, f.height * 0.82);
+      return `<text x="${f.left.toFixed(1)}" y="${(f.top + f.height * 0.8).toFixed(1)}" font-size="${size.toFixed(1)}" textLength="${f.width.toFixed(1)}" lengthAdjust="spacingAndGlyphs">${xmlEscape(l.text)}</text>`;
+    })
+    .join('');
+  return `<svg class="ocr-layer" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><g fill="#000" fill-opacity="0.01" font-family="sans-serif">${items}</g></svg>`;
+}
 
 /** Compression presets for "Compress PDF": page image width in pixels and JPEG quality. */
 export const PDF_COMPRESSION = {
@@ -28,6 +52,8 @@ export interface GeneratePdfOptions {
   compression?: PdfCompression;
   /** Write to a temporary file (e.g. several documents shared together) instead of the document's PDF. */
   temp?: boolean;
+  /** Adds an invisible OCR text layer so the PDF's text can be searched and copied. */
+  searchable?: boolean;
 }
 
 export class PdfService {
@@ -66,6 +92,7 @@ export class PdfService {
 
       let base64 = '';
       let baked = false;
+      let overlay = '';
       try {
         let sourcePath = imageUri;
         if (options.renderPage) {
@@ -98,6 +125,15 @@ export class PdfService {
           base64 = await FileSystem.readAsStringAsync(transformedUri, {
             encoding: FileSystem.EncodingType.Base64,
           });
+          if (options.searchable) {
+            try {
+              // OCR the exact image placed in the PDF, so the text lines up with it
+              const [ocr, size] = await Promise.all([OcrService.recognize(transformedUri), imageSize(transformedUri)]);
+              overlay = textLayer(ocr.lines, size.width, size.height);
+            } catch (err) {
+              console.warn(`OCR text layer skipped [${i}]:`, err);
+            }
+          }
         }
       } catch (err) {
         console.warn(`Failed to process page image for PDF [${i}]:`, err);
@@ -113,6 +149,7 @@ export class PdfService {
             filter: baked ? 'original' : page.filter,
             rotation: 0,
             isForPdf: true,
+            overlay,
           })}
         </div>
       `);
@@ -177,6 +214,14 @@ export class PdfService {
               width: auto;
               height: auto;
               object-fit: contain;
+            }
+            .ocr-layer {
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              pointer-events: none;
             }
             .dodge-clip {
               position: absolute;

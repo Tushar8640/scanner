@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Document, Folder, Page, PageAdjust, PageFilter, PageRotation } from '@/core/types';
+import { Document, Folder, Page, PageAdjust, PageFilter, PageRotation, Tag } from '@/core/types';
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { StorageService } from '@/services/storage/StorageService';
 import { ImageService } from '@/services/image/ImageService';
@@ -24,6 +24,37 @@ export interface EditedPageInput {
   adjust?: PageAdjust | null;
   /** OCR text to keep when the page image did not change. */
   ocrText?: string | null;
+}
+
+let loadSeq = 0;
+
+/**
+ * Reads the text of every page that has none yet (new, edited or imported pages) and updates the
+ * document's search text. Runs in the background so saving is never held up.
+ */
+function refreshOcr(docId: string, onDone?: () => void) {
+  (async () => {
+    try {
+      const pages = await DatabaseService.getPagesByDocumentId(docId);
+      const texts: string[] = [];
+      let changed = false;
+      for (const page of pages) {
+        let text = page.ocr_text;
+        if (text == null) {
+          text = await OcrService.recognizeText(page.processed_path || page.original_path);
+          await DatabaseService.updatePage(page.id, { ocr_text: text });
+          changed = true;
+        }
+        if (text) texts.push(text);
+      }
+      if (changed) {
+        await DatabaseService.updateDocument(docId, { ocr_text: texts.join('\n') || null });
+        onDone?.();
+      }
+    } catch (e) {
+      console.warn('Background OCR error:', e);
+    }
+  })();
 }
 
 /** Copies a page's files into the document folder and returns its database row. */
@@ -64,6 +95,16 @@ interface DocumentState {
   sortBy: SortOption;
   isLoading: boolean;
   pendingScanImages: { uri: string; cropped?: boolean }[];
+  tags: Tag[];
+  /** document id -> tag ids */
+  docTags: Record<string, string[]>;
+  loadTags: () => Promise<void>;
+  createTag: (name: string) => Promise<Tag>;
+  deleteTag: (id: string) => Promise<void>;
+  /** Adds (on) or removes a tag on several documents. */
+  setTagOnDocuments: (documentIds: string[], tagId: string, on: boolean) => Promise<void>;
+  setDocumentsLocked: (documentIds: string[], locked: boolean) => Promise<void>;
+  setFolderLocked: (folderId: string, locked: boolean) => Promise<void>;
   /** Pages shot from the review screen's Add page; the open review screen appends and clears them. */
   reviewAppendImages: { uri: string; cropped?: boolean }[];
 
@@ -146,6 +187,40 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   sortBy: 'newest',
   isLoading: false,
   pendingScanImages: [],
+  tags: [],
+  docTags: {},
+
+  loadTags: async () => {
+    const [tags, docTags] = await Promise.all([DatabaseService.getTags(), DatabaseService.getDocumentTagMap()]);
+    set({ tags, docTags });
+  },
+
+  createTag: async (name) => {
+    const tag: Tag = { id: `tag_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name: name.trim(), created_at: Date.now() };
+    await DatabaseService.createTag(tag);
+    await get().loadTags();
+    return tag;
+  },
+
+  deleteTag: async (id) => {
+    await DatabaseService.deleteTag(id);
+    await get().loadTags();
+  },
+
+  setTagOnDocuments: async (documentIds, tagId, on) => {
+    for (const id of documentIds) await DatabaseService.setDocumentTag(id, tagId, on);
+    await get().loadTags();
+  },
+
+  setDocumentsLocked: async (documentIds, locked) => {
+    for (const id of documentIds) await DatabaseService.updateDocument(id, { is_locked: locked ? 1 : 0 });
+    await get().loadAll();
+  },
+
+  setFolderLocked: async (folderId, locked) => {
+    await DatabaseService.setFolderLocked(folderId, locked);
+    await get().loadAll();
+  },
   reviewAppendImages: [],
 
   setPendingScanImages: (pendingScanImages) => set({ pendingScanImages }),
@@ -166,6 +241,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   loadAll: async () => {
+    // Typing a search starts a load per key; only the newest result may update the list
+    const seq = ++loadSeq;
     try {
       set({ isLoading: true });
       await StorageService.init();
@@ -180,11 +257,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         docs = await DatabaseService.getDocuments(activeFolderId);
       }
 
+      if (seq !== loadSeq) return;
       set({
         folders,
         documents: sortDocuments(docs, sortBy),
         isLoading: false,
       });
+      await get().loadTags();
     } catch (e) {
       console.error('Error loading documents:', e);
       set({ isLoading: false });
@@ -282,25 +361,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // Run OCR in background after saving so save isn't held up (Step 4)
-    (async () => {
-      try {
-        const ocrTexts: string[] = [];
-        for (const page of pages) {
-          const text = await OcrService.recognizeText(page.processed_path || page.original_path);
-          if (text) {
-            ocrTexts.push(text);
-            await DatabaseService.updatePage(page.id, { ocr_text: text });
-          }
-        }
-        if (ocrTexts.length > 0) {
-          const joinedText = ocrTexts.join('\n');
-          await DatabaseService.updateDocument(docId, { ocr_text: joinedText });
-          get().loadAll();
-        }
-      } catch (ocrErr) {
-        console.warn('Background OCR error:', ocrErr);
-      }
-    })();
+    refreshOcr(docId, () => get().loadAll());
 
     // Clear pending scan images now that document is created
     set({ pendingScanImages: [] });
@@ -321,6 +382,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       added.push(await storePage(documentId, pageId, start + i, img, 'magic'));
     }
     await DatabaseService.insertPages(added);
+    refreshOcr(documentId, () => get().loadAll());
     // The old PDF no longer matches the pages
     await DatabaseService.updateDocument(documentId, {
       page_count: start + added.length,
@@ -399,6 +461,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
     if (title && title.trim()) docUpdates.title = title.trim();
     await DatabaseService.updateDocument(documentId, docUpdates);
+    refreshOcr(documentId, () => get().loadAll());
     set({ pendingScanImages: [] });
     await get().loadAll();
   },
@@ -413,6 +476,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // The marked-up image replaces the crop, so there is nothing to re-crop from any more
     pageUpdates.source_path = null;
     pageUpdates.corners = null;
+    pageUpdates.ocr_text = null;
     if (options?.baked) {
       pageUpdates.filter = 'original';
       pageUpdates.adjust = null;
@@ -427,6 +491,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       docUpdates.thumbnail_path = await StorageService.saveThumbnail(page.document_id, thumb);
     }
     await DatabaseService.updateDocument(page.document_id, docUpdates);
+    refreshOcr(page.document_id, () => get().loadAll());
     await get().loadAll();
     return updated;
   },

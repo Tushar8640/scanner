@@ -48,11 +48,13 @@ const ANNOTATE_JS = String.raw`
   function drawStroke(c, s, W, H, scale) {
     if (s.points.length < 1) return;
     c.save();
+    // Eraser is a whiteout: thick opaque white that covers ink, stains or text on the page
+    var eraser = s.tool === 'eraser';
     c.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1;
-    c.strokeStyle = s.color; c.fillStyle = s.color;
+    c.strokeStyle = eraser ? '#FFFFFF' : s.color; c.fillStyle = c.strokeStyle;
     c.lineCap = s.tool === 'highlighter' ? 'butt' : 'round';
     c.lineJoin = 'round';
-    c.lineWidth = s.width * W * (s.tool === 'highlighter' ? 4 : 1);
+    c.lineWidth = s.width * W * (s.tool === 'highlighter' ? 4 : eraser ? 5 : 1);
     c.beginPath();
     c.moveTo(s.points[0][0] * W, s.points[0][1] * H);
     for (var i = 1; i < s.points.length; i++) c.lineTo(s.points[i][0] * W, s.points[i][1] * H);

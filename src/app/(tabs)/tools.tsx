@@ -20,6 +20,10 @@ interface Tool {
   onPress: () => void;
 }
 
+/** Tools that first ask where the document comes from (existing, camera, gallery, PDF). */
+type ToolTarget = 'sign' | 'watermark' | 'erase' | 'word' | 'protect';
+const TARGET_TITLE: Record<ToolTarget, TranslationKey> = { sign: 'sign', watermark: 'watermark', erase: 'eraser', word: 'toWord', protect: 'protectPdfShort' };
+
 interface Section {
   key: string;
   title: TranslationKey;
@@ -27,8 +31,8 @@ interface Section {
 }
 
 /** Opens the Files tab and asks it to focus search or open Create Folder. */
-function openFiles(action: 'search' | 'newFolder' | 'select') {
-  router.navigate({ pathname: '/files', params: { [action]: String(Date.now()) } });
+function openFiles(action: 'search' | 'newFolder' | 'select', selectFor?: 'lock' | 'tags') {
+  router.navigate({ pathname: '/files', params: { [action]: String(Date.now()), ...(selectFor ? { selectFor } : {}) } });
 }
 
 export default function ToolsScreen() {
@@ -42,7 +46,7 @@ export default function ToolsScreen() {
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [offsets, setOffsets] = useState<Record<string, number>>({});
   const [activeSection, setActiveSection] = useState('scan');
-  const [annotateActionTarget, setAnnotateActionTarget] = useState<'sign' | 'watermark' | null>(null);
+  const [annotateActionTarget, setAnnotateActionTarget] = useState<ToolTarget | null>(null);
 
   const handleAnnotateChoice = async (source: 'docs' | 'camera' | 'gallery' | 'pdf') => {
     const mode = annotateActionTarget;
@@ -55,7 +59,7 @@ export default function ToolsScreen() {
     }
 
     if (source === 'docs') {
-      router.navigate({ pathname: '/files', params: { toolAction: mode } });
+      router.navigate({ pathname: '/files', params: { toolAction: mode, toolAt: String(Date.now()) } });
       return;
     }
 
@@ -67,7 +71,7 @@ export default function ToolsScreen() {
       if (res && res.pages.length > 0) {
         const d = new Date();
         const pad = (n: number) => String(n).padStart(2, '0');
-        const title = `${t(mode)} ${pad(d.getDate())}-${pad(d.getMonth() + 1)}`;
+        const title = `${t(TARGET_TITLE[mode])} ${pad(d.getDate())}-${pad(d.getMonth() + 1)}`;
         const doc = await createDocument(
           title,
           res.pages.map((p) => ({ originalUri: p.uri, previewUri: p.uri, filter: 'original', rotation: 0 })),
@@ -106,6 +110,8 @@ export default function ToolsScreen() {
       tools: [
         { key: 'ocr', label: 'extractText', icon: 'text', tint: colors.primary, onPress: () => router.push('/extract-text') },
         { key: 'pdf', label: 'toPdf', icon: 'document', tint: '#EF4444', onPress: () => router.push('/to-pdf') },
+        { key: 'word', label: 'toWord', icon: 'document-text', tint: '#2563EB', onPress: () => setAnnotateActionTarget('word') },
+        { key: 'protect', label: 'protectPdfShort', icon: 'shield-checkmark', tint: '#10B981', onPress: () => setAnnotateActionTarget('protect') },
       ],
     },
     {
@@ -117,6 +123,7 @@ export default function ToolsScreen() {
         { key: 'split', label: 'splitPdf', icon: 'cut', tint: '#8B5CF6', onPress: () => pdf.importAsDocument('split') },
         { key: 'sign', label: 'sign', icon: 'create', tint: colors.primary, onPress: () => setAnnotateActionTarget('sign') },
         { key: 'wm', label: 'watermark', icon: 'water', tint: '#3B82F6', onPress: () => setAnnotateActionTarget('watermark') },
+        { key: 'erase', label: 'eraser', icon: 'bandage', tint: '#64748B', onPress: () => setAnnotateActionTarget('erase') },
       ],
     },
     {
@@ -130,6 +137,9 @@ export default function ToolsScreen() {
           tint: '#3B82F6',
           onPress: () => openFiles('newFolder'),
         },
+        // Lock and Tags work on several documents: pick them in Files, then use More
+        { key: 'lockdocs', label: 'lockDocsShort', icon: 'lock-closed', tint: '#64748B', onPress: () => openFiles('select', 'lock') },
+        { key: 'tags', label: 'tags', icon: 'pricetag', tint: '#F59E0B', onPress: () => openFiles('select', 'tags') },
         { key: 'trash', label: 'trash', icon: 'trash', tint: '#EF4444', onPress: () => router.push('/trash') },
         { key: 'lock', label: 'appLockShort', icon: 'lock-closed', tint: '#10B981', onPress: () => router.push('/settings/security') },
       ],
@@ -203,7 +213,7 @@ export default function ToolsScreen() {
 
       <ActionSheet
         visible={annotateActionTarget !== null}
-        title={annotateActionTarget === 'sign' ? t('sign') : t('watermark')}
+        title={annotateActionTarget ? t(TARGET_TITLE[annotateActionTarget]) : ''}
         items={[
           {
             key: 'docs',

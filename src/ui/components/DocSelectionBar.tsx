@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput, ActivityIndicator, Platform } from 'react-native';
 import { router } from 'expo-router';
 import * as Print from 'expo-print';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,10 @@ import { useScanEngine } from '@/ui/components/ScanEngine';
 import { ActionSheet } from '@/ui/components/ActionSheet';
 import { ActionButton } from '@/ui/components/ActionButton';
 import { Document, Page } from '@/core/types';
+import { TagsModal } from '@/ui/components/TagsModal';
+import { DocxService } from '@/services/export/DocxService';
+import { useItemLock } from '@/ui/hooks/useItemLock';
+import { pinShortcut } from '../../../modules/pdf-pages';
 
 interface DocSelectionBarProps {
   /** Selected documents, in the order they were selected. */
@@ -33,13 +37,18 @@ export const DocSelectionBar: React.FC<DocSelectionBarProps> = ({ docs, onDone }
   const insets = useSafeAreaInsets();
   const { t } = useSettingsStore();
   const engine = useScanEngine();
-  const { softDelete, moveToFolder, updateTitle, mergeDocuments, copyDocument, folders } = useDocumentStore();
+  const { softDelete, moveToFolder, updateTitle, mergeDocuments, copyDocument, folders, setDocumentsLocked } = useDocumentStore();
+  const { unlock } = useItemLock();
+  const [tagsVisible, setTagsVisible] = useState(false);
+  const allLocked = docs.length > 0 && docs.every((d) => d.is_locked);
   const [sheet, setSheet] = useState<'more' | 'moveCopy' | null>(null);
   const [folderMode, setFolderMode] = useState<'move' | 'copy' | null>(null);
   const [renameText, setRenameText] = useState<string | null>(null);
   const [busyText, setBusyText] = useState<string | null>(null);
 
   const run = async (label: string, fn: () => Promise<void>) => {
+    // Locked documents: nothing leaves or changes without the PIN or fingerprint
+    if (docs.some((d) => d.is_locked) && !(await unlock(`docs:${docs.map((d) => d.id).join(',')}`))) return;
     try {
       setBusyText(label);
       await fn();
@@ -57,14 +66,14 @@ export const DocSelectionBar: React.FC<DocSelectionBarProps> = ({ docs, onDone }
     if (docs.length === 1) {
       const doc = docs[0];
       const pages = await DatabaseService.getPagesByDocumentId(doc.id);
-      const path = await PdfService.generatePdf(doc.id, pages, { title: doc.title, renderPage });
+      const path = await PdfService.generatePdf(doc.id, pages, { title: doc.title, renderPage, searchable: true });
       await DatabaseService.updateDocument(doc.id, { pdf_path: path });
       return { path, name: `${doc.title}.pdf` };
     }
     const pages: Page[] = [];
     for (const d of docs) pages.push(...(await DatabaseService.getPagesByDocumentId(d.id)));
     const title = t('docsCount').replace('{n}', String(docs.length));
-    const path = await PdfService.generatePdf(docs[0].id, pages, { title, renderPage, temp: true });
+    const path = await PdfService.generatePdf(docs[0].id, pages, { title, renderPage, temp: true, searchable: true });
     return { path, name: `${title}.pdf` };
   };
 
@@ -147,6 +156,34 @@ export const DocSelectionBar: React.FC<DocSelectionBarProps> = ({ docs, onDone }
     });
   };
 
+  const exportWord = () =>
+    run(t('readingText'), async () => {
+      const name = docs.length === 1 ? docs[0].title : t('docsCount').replace('{n}', String(docs.length));
+      const file = await DocxService.fromDocuments(docs, renderPage, name);
+      setBusyText(null);
+      if (!file) {
+        Alert.alert(t('exportWord'), t('wordNoText'));
+        return;
+      }
+      await PdfService.shareFile(file, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', `${name}.docx`);
+      onDone();
+    });
+
+  const toggleLock = async () => {
+    // Locking needs an app PIN to exist; unlocking needs the PIN or fingerprint
+    if (!(await unlock(`docs:${docs.map((d) => d.id).join(',')}`))) return;
+    await setDocumentsLocked(docs.map((d) => d.id), !allLocked);
+    onDone();
+  };
+
+  const addShortcut = async () => {
+    const d = docs[0];
+    if (!d) return;
+    const ok = await pinShortcut(d.id, d.title, d.thumbnail_path || '', `scanner://document/${d.id}`);
+    Alert.alert(t('addToHome'), ok ? t('shortcutAdded') : t('shortcutUnsupported'));
+    onDone();
+  };
+
   const none = docs.length === 0;
 
   return (
@@ -186,7 +223,27 @@ export const DocSelectionBar: React.FC<DocSelectionBarProps> = ({ docs, onDone }
         items={[
           { key: 'gallery', label: t('saveToGallery'), icon: 'download-outline', onPress: saveToGallery },
           { key: 'print', label: t('print'), icon: 'print-outline', onPress: print },
+          { key: 'word', label: t('exportWord'), icon: 'document-outline', onPress: exportWord },
+          ...(docs.length === 1 && Platform.OS === 'android'
+            ? [{ key: 'home', label: t('addToHome'), icon: 'phone-portrait-outline' as const, onPress: addShortcut }]
+            : []),
+          { key: 'tags', label: t('tags'), icon: 'pricetag-outline', onPress: () => setTimeout(() => setTagsVisible(true), 250) },
+          {
+            key: 'lock',
+            label: allLocked ? t('unlockDoc') : t('lockDoc'),
+            icon: allLocked ? 'lock-open-outline' : 'lock-closed-outline',
+            onPress: toggleLock,
+          },
         ]}
+      />
+
+      <TagsModal
+        visible={tagsVisible}
+        documentIds={docs.map((d) => d.id)}
+        onClose={() => {
+          setTagsVisible(false);
+          onDone();
+        }}
       />
 
       {/* Folder picker for Move / Copy */}

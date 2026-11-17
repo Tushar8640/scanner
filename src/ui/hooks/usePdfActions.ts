@@ -5,7 +5,7 @@ import { PdfImportService, ImportedPdf } from '@/services/pdf/PdfImportService';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 
-export type PdfDocAction = 'open' | 'merge' | 'split' | 'sign' | 'watermark';
+export type PdfDocAction = 'open' | 'merge' | 'split' | 'sign' | 'watermark' | 'erase' | 'word' | 'protect';
 
 /** Importing PDFs: into the editor, or straight into a document for merge, split, sign and watermark. */
 export function usePdfActions() {

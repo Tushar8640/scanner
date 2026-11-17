@@ -37,6 +37,8 @@ interface AnnotateModalProps {
   onApply: (uris: string[]) => void;
   /** Watermark only: the document's other pages, prepared on demand (filter and rotation baked in). */
   otherPages?: { count: number; prepare: (index: number) => Promise<string> };
+  /** Markup only: the tool picked when the editor opens (default pen). */
+  initialTool?: 'pen' | 'highlighter' | 'eraser';
 }
 
 const INK_COLORS = ['#111111', '#1F4FD8', '#D93025', '#188038', '#F9AB00'];
@@ -79,7 +81,7 @@ function useKeyboardHeight(): number {
   return height;
 }
 
-const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, imageUri, onClose, onApply, otherPages }) => {
+const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, imageUri, onClose, onApply, otherPages, initialTool }) => {
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   const insets = useSafeAreaInsets();
@@ -88,7 +90,7 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
   const [applying, setApplying] = useState(false);
   const [strokeCount, setStrokeCount] = useState(0);
   const [hasSig, setHasSig] = useState(false);
-  const [tool, setTool] = useState<'pen' | 'highlighter'>('pen');
+  const [tool, setTool] = useState<'pen' | 'highlighter' | 'eraser'>(initialTool ?? 'pen');
   const [inkColor, setInkColor] = useState(INK_COLORS[1]);
   const [width, setWidth] = useState(WIDTHS[1]);
   const [wmText, setWmText] = useState('');
@@ -164,6 +166,7 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
       cmd({ type: 'mode', mode });
       cmd({ type: 'color', color: inkColor });
       cmd({ type: 'width', width });
+      if (tool !== 'pen') cmd({ type: 'tool', tool });
       // Sign: put the most recent signature on the page straight away, or open the pad if there is none
       if (mode === 'sign' && !sigInitRef.current) {
         sigInitRef.current = true;
@@ -270,6 +273,7 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
             <View style={styles.row}>
               <ToolChip icon="pencil" label={t('pen')} active={tool === 'pen'} onPress={() => { setTool('pen'); cmd({ type: 'tool', tool: 'pen' }); }} />
               <ToolChip icon="color-fill" label={t('highlighter')} active={tool === 'highlighter'} onPress={() => { setTool('highlighter'); cmd({ type: 'tool', tool: 'highlighter' }); }} />
+              <ToolChip icon="bandage-outline" label={t('eraser')} active={tool === 'eraser'} onPress={() => { setTool('eraser'); cmd({ type: 'tool', tool: 'eraser' }); }} />
               <ToolChip icon="arrow-undo" label={t('undo')} disabled={strokeCount === 0} onPress={() => cmd({ type: 'undo' })} />
               <ToolChip icon="trash-outline" label={t('clearAll')} disabled={strokeCount === 0} onPress={() => cmd({ type: 'clear' })} />
             </View>
