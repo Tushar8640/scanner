@@ -97,6 +97,11 @@ interface DocumentState {
    * is then reset to the original filter and no rotation so they are not applied twice.
    */
   replacePageImage: (page: Page, newImageUri: string, options?: { baked?: boolean }) => Promise<Page>;
+  /**
+   * Split: copies the chosen pages into a new document (keeping filters and crops) and returns it.
+   * With removeFromOriginal, those pages are also taken out of the source document.
+   */
+  extractPages: (documentId: string, pageIds: string[], title: string, removeFromOriginal: boolean) => Promise<Document>;
   /** Saves a re-edited document: its pages are replaced by the edited list, in order. */
   replaceDocumentPages: (documentId: string, title: string | null, images: EditedPageInput[]) => Promise<void>;
 
@@ -322,6 +327,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
     set({ pendingScanImages: [] });
     await get().loadAll();
+  },
+
+  extractPages: async (documentId, pageIds, title, removeFromOriginal) => {
+    const all = await DatabaseService.getPagesByDocumentId(documentId);
+    const source = await DatabaseService.getDocumentById(documentId);
+    const toInput = (p: Page): EditedPageInput => ({
+      originalUri: p.original_path,
+      previewUri: p.original_path,
+      rotation: p.rotation,
+      filter: p.filter,
+      adjust: p.adjust,
+      sourceUri: p.source_path || undefined,
+      corners: p.corners ?? null,
+      ocrText: p.ocr_text,
+    });
+    const chosen = all.filter((p) => pageIds.includes(p.id));
+    if (chosen.length === 0) throw new Error('Select at least one page');
+    const newDoc = await get().createDocument(title, chosen.map(toInput), source?.folder_id ?? null, 'original');
+    const rest = all.filter((p) => !pageIds.includes(p.id));
+    if (removeFromOriginal && rest.length > 0) await get().replaceDocumentPages(documentId, null, rest.map(toInput));
+    return newDoc;
   },
 
   replaceDocumentPages: async (documentId, title, images) => {

@@ -1,0 +1,8 @@
+{
+  "name": "pdf-pages",
+  "version": "1.0.0",
+  "description": "Renders PDF pages to JPEG images on the device",
+  "main": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}

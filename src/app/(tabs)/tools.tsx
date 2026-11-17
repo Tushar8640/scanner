@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, LayoutChangeEvent, Alert, type ScrollViewInstance } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, LayoutChangeEvent, Alert, ActivityIndicator, type ScrollViewInstance } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { useThemeColors } from '@/core/theme/colors';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useScanActions } from '@/ui/hooks/useScanActions';
+import { usePdfActions } from '@/ui/hooks/usePdfActions';
 import { scannerService } from '@/services/scanner/ScannerService';
 import { ActionSheet } from '@/ui/components/ActionSheet';
 import type { TranslationKey } from '@/i18n';
@@ -35,16 +36,23 @@ export default function ToolsScreen() {
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   const { createDocument, activeFolderId } = useDocumentStore();
-  const { busy, scanWithCamera, scanBatch, importImages } = useScanActions();
+  const { busy: scanBusy, scanWithCamera, scanBatch, importImages } = useScanActions();
+  const pdf = usePdfActions();
+  const busy = scanBusy || pdf.busy;
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [offsets, setOffsets] = useState<Record<string, number>>({});
   const [activeSection, setActiveSection] = useState('scan');
   const [annotateActionTarget, setAnnotateActionTarget] = useState<'sign' | 'watermark' | null>(null);
 
-  const handleAnnotateChoice = async (source: 'docs' | 'camera' | 'gallery') => {
+  const handleAnnotateChoice = async (source: 'docs' | 'camera' | 'gallery' | 'pdf') => {
     const mode = annotateActionTarget;
     setAnnotateActionTarget(null);
     if (!mode) return;
+
+    if (source === 'pdf') {
+      pdf.importAsDocument(mode);
+      return;
+    }
 
     if (source === 'docs') {
       router.navigate({ pathname: '/files', params: { toolAction: mode } });
@@ -87,7 +95,10 @@ export default function ToolsScreen() {
     {
       key: 'import',
       title: 'toolsImport',
-      tools: [{ key: 'images', label: 'importImages', icon: 'image', tint: '#3B82F6', onPress: importImages }],
+      tools: [
+        { key: 'images', label: 'importImages', icon: 'image', tint: '#3B82F6', onPress: importImages },
+        { key: 'pdfin', label: 'importPdf', icon: 'document-attach', tint: '#EF4444', onPress: () => pdf.importToEditor() },
+      ],
     },
     {
       key: 'convert',
@@ -102,6 +113,8 @@ export default function ToolsScreen() {
       title: 'toolsEdit',
       tools: [
         { key: 'merge', label: 'mergeDocs', icon: 'git-merge', tint: '#F59E0B', onPress: () => openFiles('select') },
+        { key: 'mergepdf', label: 'mergePdf', icon: 'documents', tint: '#F59E0B', onPress: () => pdf.importAsDocument('merge') },
+        { key: 'split', label: 'splitPdf', icon: 'cut', tint: '#8B5CF6', onPress: () => pdf.importAsDocument('split') },
         { key: 'sign', label: 'sign', icon: 'create', tint: colors.primary, onPress: () => setAnnotateActionTarget('sign') },
         { key: 'wm', label: 'watermark', icon: 'water', tint: '#3B82F6', onPress: () => setAnnotateActionTarget('watermark') },
       ],
@@ -181,6 +194,13 @@ export default function ToolsScreen() {
         ))}
       </ScrollView>
 
+      {pdf.busy && (
+        <View style={styles.busyOverlay}>
+          <ActivityIndicator size="large" color="#FFFFFF" />
+          <Text style={styles.busyText}>{t('importingPdf')}</Text>
+        </View>
+      )}
+
       <ActionSheet
         visible={annotateActionTarget !== null}
         title={annotateActionTarget === 'sign' ? t('sign') : t('watermark')}
@@ -203,6 +223,12 @@ export default function ToolsScreen() {
             icon: 'images-outline',
             onPress: () => handleAnnotateChoice('gallery'),
           },
+          {
+            key: 'pdf',
+            label: t('importPdfFile'),
+            icon: 'document-attach-outline',
+            onPress: () => handleAnnotateChoice('pdf'),
+          },
         ]}
         onClose={() => setAnnotateActionTarget(null)}
       />
@@ -211,6 +237,8 @@ export default function ToolsScreen() {
 }
 
 const styles = StyleSheet.create({
+  busyOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  busyText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
   container: {
     flex: 1,
   },

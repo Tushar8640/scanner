@@ -9,7 +9,9 @@ export class ImageService {
     sourceUri: string,
     rotation: PageRotation = 0,
     filter: PageFilter = 'original',
-    qualityLevel: 'low' | 'medium' | 'high' = 'medium'
+    qualityLevel: 'low' | 'medium' | 'high' = 'medium',
+    /** Exact size and JPEG quality, e.g. for compressed PDFs; overrides qualityLevel. */
+    override?: { maxDimension: number; compress: number }
   ): Promise<string> {
     const actions: ImageManipulator.Action[] = [];
 
@@ -28,6 +30,11 @@ export class ImageService {
     } else if (qualityLevel === 'high') {
       maxDimension = 1800;
       compressVal = 0.9;
+    }
+
+    if (override) {
+      maxDimension = override.maxDimension;
+      compressVal = override.compress;
     }
 
     actions.push({ resize: { width: maxDimension } });

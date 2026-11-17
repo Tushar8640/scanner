@@ -8,6 +8,13 @@ import { ImageService } from '../image/ImageService';
 import { generatePageMarkup } from '../image/FilterUtils';
 import { SecurityService } from '../security/SecurityService';
 
+/** Compression presets for "Compress PDF": page image width in pixels and JPEG quality. */
+export const PDF_COMPRESSION = {
+  balanced: { maxDimension: 1200, compress: 0.55 },
+  small: { maxDimension: 900, compress: 0.4 },
+} as const;
+export type PdfCompression = keyof typeof PDF_COMPRESSION;
+
 export interface GeneratePdfOptions {
   title: string;
   pageSize?: PdfPageSize;
@@ -17,6 +24,8 @@ export interface GeneratePdfOptions {
    * Without it, filters fall back to a CSS approximation.
    */
   renderPage?: (page: Page) => Promise<string>;
+  /** Smaller page images for a compressed copy. The result is a separate file; the saved PDF is untouched. */
+  compression?: PdfCompression;
 }
 
 export class PdfService {
@@ -78,7 +87,8 @@ export class PdfService {
           sourcePath,
           (baked ? 0 : page.rotation || 0) as PageRotation,
           'original',
-          options.quality || 'medium'
+          options.quality || 'medium',
+          options.compression ? PDF_COMPRESSION[options.compression] : undefined
         );
 
         const transformedInfo = await FileSystem.getInfoAsync(transformedUri);
@@ -210,6 +220,13 @@ export class PdfService {
     const dirInfo = await FileSystem.getInfoAsync(docDir);
     if (!dirInfo.exists) {
       await FileSystem.makeDirectoryAsync(docDir, { intermediates: true });
+    }
+
+    // A compressed copy is a temporary file for sharing; it never replaces the document's PDF
+    if (options.compression) {
+      const out = `${FileSystem.cacheDirectory}compressed_${Date.now()}.pdf`;
+      await FileSystem.copyAsync({ from: printResult.uri, to: out });
+      return out;
     }
 
     // Copy to persistent document folder (remove existing first to avoid overwrite errors)

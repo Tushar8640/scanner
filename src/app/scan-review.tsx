@@ -78,7 +78,8 @@ export default function ScanReviewScreen() {
 function ScanReviewContent() {
   // appendTo: opened from a document's "Add" card, so Save appends pages instead of creating a document
   // editDoc: re-editing a saved document (from its Edit button); Save replaces its pages
-  const params = useLocalSearchParams<{ rawImages?: string; appendTo?: string; editDoc?: string; page?: string }>();
+  // title / pdf: pages imported from PDFs (named after the file, no filter by default)
+  const params = useLocalSearchParams<{ rawImages?: string; appendTo?: string; editDoc?: string; page?: string; title?: string; pdf?: string }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const { createDocument, addPages, replaceDocumentPages, activeFolderId, pendingScanImages } = useDocumentStore();
@@ -97,12 +98,12 @@ function ScanReviewContent() {
         console.error('Failed to parse params.rawImages:', e);
       }
     }
-    return toEditablePages(list, 'page', useSettingsStore.getState().default_filter);
+    return toEditablePages(list, 'page', params.pdf ? 'original' : useSettingsStore.getState().default_filter);
   });
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   // Starts with the default name, like the reference editor; empty when adding to an existing document
   const [docTitle, setDocTitle] = useState(() =>
-    params.appendTo || params.editDoc ? '' : formatDocumentName(useSettingsStore.getState().doc_name_format)
+    params.title || (params.appendTo || params.editDoc ? '' : formatDocumentName(useSettingsStore.getState().doc_name_format))
   );
   const [isSaving, setIsSaving] = useState(false);
   const [cropModalVisible, setCropModalVisible] = useState(false);

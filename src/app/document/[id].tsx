@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Document, Page, PageRotation, PdfPageSize, PdfQuality } from '@/core/types';
 import { DatabaseService } from '@/services/database/DatabaseService';
-import { PdfService } from '@/services/pdf/PdfService';
+import { PdfCompression, PdfService } from '@/services/pdf/PdfService';
 import { GalleryService } from '@/services/storage/GalleryService';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
@@ -51,7 +51,7 @@ function safeFileName(title: string): string {
 }
 
 function DocumentDetail() {
-  const { id, action } = useLocalSearchParams<{ id: string; action?: AnnotateMode | 'pdf' }>();
+  const { id, action } = useLocalSearchParams<{ id: string; action?: AnnotateMode | 'pdf' | 'split' }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const engine = useScanEngine();
@@ -69,7 +69,7 @@ function DocumentDetail() {
   // `uri` is the page rendered with its filter and rotation, so the editor shows what the user sees
   const [annotate, setAnnotate] = useState<{ mode: AnnotateMode; page: Page; uri: string } | null>(null);
   const [viewerHint, setViewerHint] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<'more' | 'share' | 'add' | null>(null);
+  const [sheet, setSheet] = useState<'more' | 'share' | 'add' | 'compress' | null>(null);
   const [pdfModalVisible, setPdfModalVisible] = useState(false);
   const [pageSize, setPageSize] = useState<PdfPageSize>(default_page_size);
   const [quality, setQuality] = useState<PdfQuality>(default_quality);
@@ -77,6 +77,8 @@ function DocumentDetail() {
   const [titleInput, setTitleInput] = useState('');
   const [moveVisible, setMoveVisible] = useState(false);
   const actionHandledRef = useRef(false);
+  // Split mode: ids of the pages chosen for the new document (null when not splitting)
+  const [splitSelection, setSplitSelection] = useState<string[] | null>(null);
 
   const reload = useCallback(async () => {
     if (!id) return;
@@ -90,6 +92,8 @@ function DocumentDetail() {
         actionHandledRef.current = true;
         if (action === 'pdf') {
           setPdfModalVisible(true);
+        } else if (action === 'split') {
+          setSplitSelection([]);
         } else if (action === 'sign' && list.length > 1) {
           // Let the user pick which page to sign
           setViewerHint(t('signPickPage'));
@@ -163,6 +167,68 @@ function DocumentDetail() {
       const path = await ensurePdf();
       setBusyText(null);
       await PdfService.shareFile(path, 'application/pdf', `${safeFileName(document.title)}.pdf`);
+    });
+
+  /** Split: the chosen pages become a new document, optionally removed from this one. */
+  const extractSelected = () => {
+    if (!document || !splitSelection || splitSelection.length === 0) return;
+    const ids = pages.filter((p) => splitSelection.includes(p.id)).map((p) => p.id);
+    const run = (remove: boolean) =>
+      withBusy(t('processing'), async () => {
+        const title = `${document.title} (${ids.length})`;
+        const created = await useDocumentStore.getState().extractPages(document.id, ids, title, remove);
+        setSplitSelection(null);
+        setBusyText(null);
+        router.push({ pathname: '/document/[id]', params: { id: created.id } });
+      });
+    if (ids.length === pages.length) {
+      run(false);
+      return;
+    }
+    Alert.alert(t('splitPdf'), t('splitRemoveQ'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('keepPages'), onPress: () => run(false) },
+      { text: t('removePages'), style: 'destructive', onPress: () => run(true) },
+    ]);
+  };
+
+  /** Builds a smaller copy of the PDF, shows how much it saved, then shares or saves it. */
+  const compressPdf = (level: PdfCompression) =>
+    withBusy(t('compressing'), async () => {
+      if (!document || pages.length === 0) return;
+      const original = await ensurePdf();
+      const out = await PdfService.generatePdf(document.id, pages, {
+        title: document.title,
+        pageSize,
+        quality,
+        renderPage: renderPdfPage,
+        compression: level,
+      });
+      const [a, b] = await Promise.all([FileSystem.getInfoAsync(original), FileSystem.getInfoAsync(out)]);
+      const from = a.exists ? a.size : 0;
+      const to = b.exists ? b.size : 0;
+      setBusyText(null);
+      const fileName = `${safeFileName(document.title)}_compressed.pdf`;
+      // Not worth it: offer the original instead of a bigger or equal file
+      const useOriginal = from > 0 && to >= from;
+      const file = useOriginal ? original : out;
+      const message = useOriginal
+        ? t('compressNoGain').replace('{size}', formatBytes(from))
+        : t('compressResult')
+            .replace('{from}', formatBytes(from))
+            .replace('{to}', formatBytes(to))
+            .replace('{pct}', String(Math.round((1 - to / Math.max(1, from)) * 100)));
+      Alert.alert(t('compressDone'), message, [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('saveToDownloads'),
+          onPress: async () => {
+            const saved = await PdfService.saveToDownloads(file, fileName);
+            if (saved) Alert.alert(t('success'), t('pdfSavedToDownloads'));
+          },
+        },
+        { text: t('share'), onPress: () => PdfService.shareFile(file, 'application/pdf', fileName) },
+      ]);
     });
 
   /** Renders pages with their filter and rotation baked in, as JPG files. */
@@ -366,10 +432,15 @@ function DocumentDetail() {
     { key: 'move', label: t('moveToFolder'), icon: 'folder-outline', onPress: () => setMoveVisible(true) },
     { key: 'gallery', label: t('saveToGallery'), icon: 'images-outline', onPress: () => saveToGallery(pages) },
     { key: 'pdf', label: t('exportPdf'), icon: 'document-text-outline', onPress: () => setPdfModalVisible(true) },
+    ...(pages.length > 1
+      ? [{ key: 'split', label: t('splitPages'), icon: 'cut-outline' as const, onPress: () => setSplitSelection([]) }]
+      : []),
     { key: 'delete', label: t('delete'), icon: 'trash-outline', destructive: true, onPress: deleteDocument },
   ];
   const shareItems: ActionSheetItem[] = [
     { key: 'pdf', label: t('sharePdf'), icon: 'document-text-outline', onPress: sharePdf },
+    // Opened after this sheet closes, so the two sheets never overlap
+    { key: 'compress', label: t('compressPdf'), icon: 'contract-outline', onPress: () => setTimeout(() => setSheet('compress'), 250) },
     ...(pages.length === 1
       ? [{ key: 'jpg', label: t('shareJpg'), icon: 'image-outline' as const, onPress: () => shareImage(0) }]
       : []),
@@ -423,6 +494,13 @@ function DocumentDetail() {
         </TouchableOpacity>
       </View>
 
+      {splitSelection && (
+        <View style={[styles.splitBanner, { backgroundColor: colors.primary }]}>
+          <Ionicons name="cut-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.splitBannerText}>{t('splitHint')}</Text>
+        </View>
+      )}
+
       {/* Pages */}
       <ScrollView contentContainerStyle={styles.gridContent} scrollEnabled={!gridDragging}>
         <DraggableGrid
@@ -434,7 +512,15 @@ function DocumentDetail() {
           cellHeight={cellHeight}
           gap={GRID_GAP}
           onReorder={reorderPages}
-          onPressItem={setViewerIndex}
+          onPressItem={(index) => {
+            if (!splitSelection) {
+              setViewerIndex(index);
+              return;
+            }
+            const pid = pages[index]?.id;
+            if (!pid) return;
+            setSplitSelection((sel) => (sel?.includes(pid) ? sel.filter((x) => x !== pid) : [...(sel ?? []), pid]));
+          }}
           onDragActiveChange={setGridDragging}
           renderItem={(item, index) => (
             <View style={[styles.pageCell, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -453,6 +539,11 @@ function DocumentDetail() {
                   {index + 1}/{pages.length}
                 </Text>
               </View>
+              {splitSelection && (
+                <View style={[styles.splitCheck, splitSelection.includes(item.id) && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                  {splitSelection.includes(item.id) && <Ionicons name="checkmark" size={18} color="#FFFFFF" />}
+                </View>
+              )}
             </View>
           )}
         />
@@ -467,6 +558,17 @@ function DocumentDetail() {
       </ScrollView>
 
       {/* Bottom bar */}
+      {splitSelection ? (
+        <View style={[styles.bottomBar, styles.splitBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 8) }]}>
+          <ActionButton title={t('cancel')} variant="outline" onPress={() => setSplitSelection(null)} style={styles.flex1} />
+          <ActionButton
+            title={t('extractCount').replace('{n}', String(splitSelection.length))}
+            disabled={splitSelection.length === 0}
+            onPress={extractSelected}
+            style={styles.flex1}
+          />
+        </View>
+      ) : (
       <View
         style={[
           styles.bottomBar,
@@ -489,6 +591,7 @@ function DocumentDetail() {
           onPress={() => startSign(pages)}
         />
       </View>
+      )}
 
       {busyText && (
         <View style={styles.busyOverlay}>
@@ -498,7 +601,16 @@ function DocumentDetail() {
       )}
 
       <ActionSheet visible={sheet === 'more'} title={document.title} items={moreItems} onClose={() => setSheet(null)} />
-      <ActionSheet visible={sheet === 'share'} title={t('share')} items={shareItems} onClose={() => setSheet(null)} />
+      <ActionSheet visible={sheet === 'share'} title={t('share')} items={shareItems} onClose={() => setSheet((s) => (s === 'share' ? null : s))} />
+      <ActionSheet
+        visible={sheet === 'compress'}
+        title={t('compressPdf')}
+        items={[
+          { key: 'balanced', label: t('compressBalanced'), icon: 'contract-outline', onPress: () => compressPdf('balanced') },
+          { key: 'small', label: t('compressSmall'), icon: 'arrow-down-circle-outline', onPress: () => compressPdf('small') },
+        ]}
+        onClose={() => setSheet(null)}
+      />
       <ActionSheet visible={sheet === 'add'} title={t('addPage')} items={addItems} onClose={() => setSheet(null)} />
 
       {/* Page viewer with per-page tools */}
@@ -711,7 +823,30 @@ const ViewerTool: React.FC<{ icon: keyof typeof Ionicons.glyphMap; label: string
   </TouchableOpacity>
 );
 
+
+/** File size for people, e.g. "2.4 MB". */
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
 const styles = StyleSheet.create({
+  splitCheck: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  splitBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  splitBannerText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600', flex: 1 },
+  splitBar: { gap: 10, paddingHorizontal: 16, paddingTop: 10 },
   container: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   flex1: { flex: 1 },

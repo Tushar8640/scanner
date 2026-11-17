@@ -24,6 +24,7 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { scannerService } from '@/services/scanner/ScannerService';
 import { ActionButton } from '@/ui/components/ActionButton';
+import { usePdfActions } from '@/ui/hooks/usePdfActions';
 
 type CaptureMode = 'single' | 'batch';
 type FlashSetting = 'off' | 'on' | 'auto' | 'torch';
@@ -72,6 +73,7 @@ export default function BatchScanScreen() {
   const setPendingScanImages = useDocumentStore((s) => s.setPendingScanImages);
   const setReviewAppendImages = useDocumentStore((s) => s.setReviewAppendImages);
   const [permission, requestPermission] = useCameraPermissions();
+  const pdf = usePdfActions();
 
   // Typed as any: CameraView's class typings conflict with React 19 ref types
   const cameraRef = useRef<any>(null);
@@ -322,10 +324,17 @@ export default function BatchScanScreen() {
               <Ionicons name="chevron-forward" size={22} color="#FFFFFF" />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.sideBtn} onPress={importFromGallery} disabled={importing}>
-              {importing ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="images-outline" size={30} color="#FFFFFF" />}
-              <Text style={styles.sideText}>{t('importImages')}</Text>
-            </TouchableOpacity>
+            <View style={styles.importRow}>
+              <TouchableOpacity style={styles.sideBtn} onPress={importFromGallery} disabled={importing || pdf.busy}>
+                {importing ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="images-outline" size={28} color="#FFFFFF" />}
+                <Text style={styles.sideText}>{t('importImages')}</Text>
+              </TouchableOpacity>
+              {/* PDFs open in the editor, like the reference camera's Import Files */}
+              <TouchableOpacity style={styles.sideBtn} onPress={() => pdf.importToEditor({ replace: true })} disabled={importing || pdf.busy}>
+                {pdf.busy ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="document-attach-outline" size={28} color="#FFFFFF" />}
+                <Text style={styles.sideText}>{t('importFiles')}</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       </View>
@@ -369,8 +378,9 @@ const styles = StyleSheet.create({
   tabIndicator: { position: 'absolute', top: 0, width: 28, height: 4, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
   tabText: { color: '#D0D3D8', fontSize: 16, fontWeight: '500' },
   controls: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  side: { width: 110, alignItems: 'center' },
-  sideBtn: { alignItems: 'center', gap: 6, minWidth: 80 },
+  side: { width: 130, alignItems: 'center' },
+  importRow: { flexDirection: 'row', gap: 6 },
+  sideBtn: { alignItems: 'center', gap: 6, minWidth: 62 },
   sideText: { color: '#FFFFFF', fontSize: 13, textAlign: 'center' },
   shutter: { width: 84, height: 84, borderRadius: 42, borderWidth: 6, alignItems: 'center', justifyContent: 'center' },
   shutterBusy: { opacity: 0.6 },
