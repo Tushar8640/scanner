@@ -1,4 +1,23 @@
-export type PageFilter = 'original' | 'lighten' | 'magic' | 'enhanced' | 'noshadow' | 'bw' | 'grayscale';
+/** 'magic' is shown as "Enhance". 'enhanced' is kept only so older saved pages still render. */
+export type PageFilter =
+  | 'original'
+  | 'lighten'
+  | 'magic'
+  | 'enhanced'
+  | 'noshadow'
+  | 'bw'
+  | 'eco'
+  | 'grayscale'
+  | 'invert';
+
+/** Manual fine-tuning on top of a filter. Each value is 0 to 100; 50 leaves the filter unchanged. */
+export interface PageAdjust {
+  contrast: number;
+  brightness: number;
+  details: number;
+}
+
+export const DEFAULT_ADJUST: PageAdjust = { contrast: 50, brightness: 50, details: 50 };
 export type PageRotation = 0 | 90 | 180 | 270;
 export type PdfPageSize = 'A4' | 'Letter' | 'Fit';
 export type PdfQuality = 'low' | 'medium' | 'high';
@@ -34,7 +53,9 @@ export interface Page {
   original_path: string;
   processed_path: string;
   filter: PageFilter;
-  intensity?: number; // 0.1 to 1.0 (default 0.6)
+  /** Legacy single-slider strength; no longer used for rendering. */
+  intensity?: number;
+  adjust?: PageAdjust | null;
   rotation: PageRotation;
   ocr_text: string | null;
 }

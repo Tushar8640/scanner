@@ -19,7 +19,6 @@ import { Document, Page, PageRotation, PdfPageSize, PdfQuality } from '@/core/ty
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { PdfService } from '@/services/pdf/PdfService';
 import { GalleryService } from '@/services/storage/GalleryService';
-import { getFilterRecipe } from '@/services/image/FilterUtils';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { ActionButton } from '@/ui/components/ActionButton';
@@ -102,7 +101,8 @@ function DocumentDetail() {
           try {
             const uri = await engine.renderFiltered(
               page.processed_path || page.original_path,
-              getFilterRecipe(page.filter, page.intensity ?? 0.6),
+              page.filter,
+              page.adjust,
               page.rotation
             );
             setAnnotate({ mode: action, page, uri });
@@ -131,13 +131,16 @@ function DocumentDetail() {
 
   /* ---------- actions ---------- */
 
+  /** PDF pages go through the same filter pipeline as the preview. */
+  const renderPdfPage = (p: Page) => engine.renderFiltered(p.processed_path || p.original_path, p.filter, p.adjust, p.rotation);
+
   const ensurePdf = async (): Promise<string> => {
     if (!document) throw new Error('No document');
     if (document.pdf_path) {
       const info = await FileSystem.getInfoAsync(document.pdf_path);
       if (info.exists) return document.pdf_path;
     }
-    const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality });
+    const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality, renderPage: renderPdfPage });
     await DatabaseService.updateDocument(document.id, { pdf_path: path });
     setDocument((prev) => (prev ? { ...prev, pdf_path: path } : prev));
     return path;
@@ -166,7 +169,7 @@ function DocumentDetail() {
   const renderPages = async (list: Page[]): Promise<string[]> => {
     const out: string[] = [];
     for (const p of list) {
-      out.push(await engine.renderFiltered(p.processed_path || p.original_path, getFilterRecipe(p.filter, p.intensity ?? 0.6), p.rotation));
+      out.push(await engine.renderFiltered(p.processed_path || p.original_path, p.filter, p.adjust, p.rotation));
     }
     return out;
   };
@@ -221,7 +224,7 @@ function DocumentDetail() {
   const generatePdfWithOptions = () =>
     withBusy(t('generating'), async () => {
       if (!document || pages.length === 0) return;
-      const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality });
+      const path = await PdfService.generatePdf(document.id, pages, { title: document.title, pageSize, quality, renderPage: renderPdfPage });
       await DatabaseService.updateDocument(document.id, { pdf_path: path });
       setDocument((prev) => (prev ? { ...prev, pdf_path: path } : prev));
       setPdfModalVisible(false);
@@ -439,7 +442,8 @@ function DocumentDetail() {
                 <DocumentPageView
                   uri={item.processed_path || item.original_path}
                   filter={item.filter}
-                  intensity={item.intensity ?? 0.6}
+                  adjust={item.adjust}
+                  maxSide={700}
                   rotation={item.rotation}
                   backgroundColor={colors.surface}
                 />
@@ -512,7 +516,7 @@ function DocumentDetail() {
                 key={`${viewerPage.id}:${viewerPage.processed_path}`}
                 uri={viewerPage.processed_path || viewerPage.original_path}
                 filter={viewerPage.filter}
-                intensity={viewerPage.intensity ?? 0.6}
+                adjust={viewerPage.adjust}
                 rotation={viewerPage.rotation}
                 backgroundColor="#000000"
               />

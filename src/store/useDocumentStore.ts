@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Document, Folder, Page, PageFilter, PageRotation } from '@/core/types';
+import { Document, Folder, Page, PageAdjust, PageFilter, PageRotation } from '@/core/types';
 import { DatabaseService } from '@/services/database/DatabaseService';
 import { StorageService } from '@/services/storage/StorageService';
 import { ImageService } from '@/services/image/ImageService';
@@ -34,7 +34,10 @@ interface DocumentState {
   
   createDocument: (
     title: string | null,
-    images: ({ uri: string } | { originalUri: string; previewUri: string; rotation?: PageRotation; filter?: PageFilter })[],
+    images: (
+      | { uri: string }
+      | { originalUri: string; previewUri: string; rotation?: PageRotation; filter?: PageFilter; adjust?: PageAdjust | null }
+    )[],
     folderId?: string | null,
     filter?: PageFilter
   ) => Promise<Document>;
@@ -42,7 +45,7 @@ interface DocumentState {
   /** Appends edited pages to an existing document (the "Add" card on the document screen). */
   addPages: (
     documentId: string,
-    images: { originalUri: string; rotation?: PageRotation; filter?: PageFilter; intensity?: number }[]
+    images: { originalUri: string; rotation?: PageRotation; filter?: PageFilter; adjust?: PageAdjust | null }[]
   ) => Promise<void>;
   /**
    * Replaces a saved page's image, e.g. after markup, signature or watermark. Returns the updated page.
@@ -186,7 +189,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         original_path: origPath,
         processed_path: procPath,
         filter: pageFilter,
-        intensity: img.intensity ?? 0.6,
+        adjust: img.adjust ?? null,
         rotation: pageRotation,
         ocr_text: null,
       });
@@ -268,7 +271,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         original_path: origPath,
         processed_path: procPath,
         filter,
-        intensity: img.intensity ?? 0.6,
+        adjust: img.adjust ?? null,
         rotation: img.rotation || 0,
         ocr_text: null,
       });
@@ -293,6 +296,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const pageUpdates: Partial<Page> = { original_path: origPath, processed_path: procPath };
     if (options?.baked) {
       pageUpdates.filter = 'original';
+      pageUpdates.adjust = null;
       pageUpdates.rotation = 0;
     }
     await DatabaseService.updatePage(page.id, pageUpdates);
@@ -309,7 +313,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   mergeDocuments: async (documentIds, title) => {
-    const images: { originalUri: string; previewUri: string; rotation: PageRotation; filter: PageFilter; intensity?: number }[] = [];
+    const images: { originalUri: string; previewUri: string; rotation: PageRotation; filter: PageFilter; adjust?: PageAdjust | null }[] = [];
     let folderId: string | null = null;
     for (let i = 0; i < documentIds.length; i++) {
       const doc = await DatabaseService.getDocumentById(documentIds[i]);
@@ -321,7 +325,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           previewUri: p.original_path,
           rotation: p.rotation,
           filter: p.filter,
-          intensity: p.intensity,
+          adjust: p.adjust,
         });
       }
     }

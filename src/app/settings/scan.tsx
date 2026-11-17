@@ -30,7 +30,9 @@ export default function ScanSettingsScreen() {
     enhanced: { title: t('filterEnhanced'), subtitle: t('filterEnhancedDesc') },
     noshadow: { title: t('filterNoShadow'), subtitle: t('filterNoShadowDesc') },
     bw: { title: t('filterBw'), subtitle: t('filterBwDesc') },
+    eco: { title: t('filterEco'), subtitle: t('filterEcoDesc') },
     grayscale: { title: t('filterGrayscale'), subtitle: t('filterGrayscaleDesc') },
+    invert: { title: t('filterInvert'), subtitle: t('filterInvertDesc') },
   };
   const filterOptions: OptionItem<PageFilter>[] = FILTER_ORDER.map((f) => ({ value: f, ...filterInfo[f] }));
 

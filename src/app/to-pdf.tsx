@@ -80,7 +80,6 @@ export default function ToPdfScreen() {
         processed_path: p.uri,
         rotation: 0,
         filter: 'original',
-        intensity: 0.6,
         ocr_text: null,
       }));
 
@@ -113,7 +112,6 @@ export default function ToPdfScreen() {
         processed_path: p.uri,
         rotation: 0,
         filter: 'original',
-        intensity: 0.6,
         ocr_text: null,
       }));
 

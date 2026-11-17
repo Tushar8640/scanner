@@ -1,31 +1,50 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, StyleSheet, ActivityIndicator, ViewStyle } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
-import { PageFilter } from '@/core/types';
-import { generatePageHtml, getFilterRecipe } from '@/services/image/FilterUtils';
+import { PageAdjust, PageFilter } from '@/core/types';
+import { generatePageHtml } from '@/services/image/FilterUtils';
 
 interface DocumentPageViewProps {
   uri: string;
   filter: PageFilter;
-  intensity?: number;
+  adjust?: PageAdjust | null;
   rotation?: number;
   style?: ViewStyle;
   backgroundColor?: string;
+  /** Longest side the page is processed at. Use a small value for grid cells. */
+  maxSide?: number;
+  /** When set, small previews of these filters are rendered from this page and passed to onThumbnails. */
+  thumbFilters?: PageFilter[];
+  onThumbnails?: (items: Partial<Record<PageFilter, string>>) => void;
 }
 
+/** Renders one page with its filter, adjustments and rotation (pixel pipeline in a WebView). */
 export const DocumentPageView: React.FC<DocumentPageViewProps> = ({
   uri,
   filter,
-  intensity = 0.6,
+  adjust = null,
   rotation = 0,
   style,
   backgroundColor = '#1E1E1E',
+  maxSide = 1600,
+  thumbFilters,
+  onThumbnails,
 }) => {
-  const [base64, setBase64] = useState<string>('');
+  // Image data plus the filter state at load time; the HTML is built from this once per image
+  const [initial, setInitial] = useState<{ base64: string; filter: PageFilter; adjust: PageAdjust | null; rotation: number } | null>(
+    null
+  );
   const [loading, setLoading] = useState<boolean>(true);
   const webViewRef = useRef<any>(null);
   const isWebViewLoadedRef = useRef<boolean>(false);
+  // Latest filter state, read when the image finishes loading and when the WebView is ready
+  const latestRef = useRef({ filter, adjust, rotation });
+  const onThumbsRef = useRef(onThumbnails);
+  useEffect(() => {
+    onThumbsRef.current = onThumbnails;
+  }, [onThumbnails]);
+  const thumbKey = thumbFilters?.join(',') ?? '';
 
   useEffect(() => {
     let isMounted = true;
@@ -37,7 +56,7 @@ export const DocumentPageView: React.FC<DocumentPageViewProps> = ({
           encoding: FileSystem.EncodingType.Base64,
         });
         if (isMounted) {
-          setBase64(data);
+          setInitial({ base64: data, ...latestRef.current });
           setLoading(false);
         }
       } catch (err) {
@@ -54,31 +73,51 @@ export const DocumentPageView: React.FC<DocumentPageViewProps> = ({
     };
   }, [uri]);
 
-  // When filter, intensity, or rotation updates and WebView is loaded, send live GPU update without reload
+  const adjustKey = adjust ? `${adjust.contrast},${adjust.brightness},${adjust.details}` : '';
+
+  // Live update without reloading the page
   useEffect(() => {
+    latestRef.current = { filter, adjust, rotation };
     if (isWebViewLoadedRef.current && webViewRef.current) {
-      const r = getFilterRecipe(filter, intensity);
-      const script = `if (window.applyRecipe) { window.applyRecipe(${JSON.stringify(r.css)}, ${r.dodgeOpacity}, ${r.blurPx}, ${rotation}); }; true;`;
+      const script = `window.applyFilter && window.applyFilter(${JSON.stringify(filter)}, ${JSON.stringify(adjust)}, ${rotation}); true;`;
       webViewRef.current.injectJavaScript(script);
     }
-  }, [filter, intensity, rotation]);
+    // adjustKey stands in for the adjust object
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, adjustKey, rotation]);
 
-  if (loading || !base64) {
+  const html = useMemo(
+    () =>
+      initial
+        ? generatePageHtml({
+            base64: initial.base64,
+            filter: initial.filter,
+            adjust: initial.adjust,
+            rotation: initial.rotation,
+            backgroundColor,
+            maxSide,
+            thumbFilters: thumbKey ? (thumbKey.split(',') as PageFilter[]) : [],
+          })
+        : '',
+    [initial, backgroundColor, maxSide, thumbKey]
+  );
+
+  const onMessage = (e: WebViewMessageEvent) => {
+    try {
+      const msg = JSON.parse(e.nativeEvent.data);
+      if (msg?.type === 'thumbs') onThumbsRef.current?.(msg.items);
+    } catch {
+      // ignore
+    }
+  };
+
+  if (loading || !initial) {
     return (
       <View style={[styles.center, { backgroundColor }, style]}>
         <ActivityIndicator size="large" color="#0FA58E" />
       </View>
     );
   }
-
-  const html = generatePageHtml({
-    base64,
-    filter,
-    intensity,
-    rotation,
-    backgroundColor,
-    isForPdf: false,
-  });
 
   return (
     <View style={[styles.container, { backgroundColor }, style]}>
@@ -92,8 +131,14 @@ export const DocumentPageView: React.FC<DocumentPageViewProps> = ({
         showsVerticalScrollIndicator={false}
         overScrollMode="never"
         bounces={false}
+        onMessage={onMessage}
         onLoadEnd={() => {
           isWebViewLoadedRef.current = true;
+          // Apply anything that changed while the page was loading
+          const cur = latestRef.current;
+          webViewRef.current?.injectJavaScript(
+            `window.applyFilter && window.applyFilter(${JSON.stringify(cur.filter)}, ${JSON.stringify(cur.adjust)}, ${cur.rotation}); true;`
+          );
         }}
       />
     </View>

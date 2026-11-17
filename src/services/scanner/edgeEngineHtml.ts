@@ -1,3 +1,5 @@
+import { FILTER_PIPELINE_JS } from '@/services/image/filterPipelineJs';
+
 /**
  * Self-contained document edge detection and perspective correction engine.
  *
@@ -723,35 +725,19 @@ const ENGINE_JS = String.raw`
     return { b64: url.substring(url.indexOf(',') + 1), width: ow, height: oh };
   }
 
-  // Bakes a filter recipe (same as the live preview: CSS filter + colour-dodge shadow removal)
-  // and the page rotation into a full-resolution JPEG.
-  function renderFiltered(img, recipe, rotation) {
-    var D = dims(img), sc = Math.min(1, WARP_SRC_MAX / Math.max(D.w, D.h));
-    var w = Math.round(D.w * sc), h = Math.round(D.h * sc);
-    var tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
-    var t = tmp.getContext('2d');
-    t.drawImage(img, 0, 0, w, h);
-    if (recipe.dodgeOpacity > 0) {
-      // Blur radius was tuned for a ~400 px wide preview; scale it to this resolution
-      var blur = Math.max(1, Math.round(recipe.blurPx * w / 400));
-      var d = document.createElement('canvas'); d.width = w; d.height = h;
-      var dc = d.getContext('2d');
-      dc.filter = 'invert(100%) blur(' + blur + 'px) grayscale(100%)';
-      dc.drawImage(img, -0.06 * w, -0.06 * h, w * 1.12, h * 1.12);
-      t.globalAlpha = recipe.dodgeOpacity;
-      t.globalCompositeOperation = 'color-dodge';
-      t.drawImage(d, 0, 0);
-      t.globalAlpha = 1;
-      t.globalCompositeOperation = 'source-over';
-    }
+  // Bakes the page filter, adjustments (shared pixel pipeline, same as the live preview)
+  // and rotation into a JPEG.
+  var RENDER_MAX = 2400;
+  function renderFiltered(img, filter, adjust, rotation) {
+    var src = window.DocFilter.render(img, RENDER_MAX, filter || 'original', adjust || null);
+    var w = src.width, h = src.height;
     var rot = ((rotation || 0) % 360 + 360) % 360, swap = rot === 90 || rot === 270;
     var out = document.createElement('canvas'); out.width = swap ? h : w; out.height = swap ? w : h;
     var o = out.getContext('2d');
     o.fillStyle = '#FFFFFF'; o.fillRect(0, 0, out.width, out.height);
     o.translate(out.width / 2, out.height / 2);
     o.rotate(rot * Math.PI / 180);
-    o.filter = recipe.css && recipe.css !== 'none' ? recipe.css : 'none';
-    o.drawImage(tmp, -w / 2, -h / 2);
+    o.drawImage(src, -w / 2, -h / 2);
     var url = out.toDataURL('image/jpeg', 0.92);
     return { b64: url.substring(url.indexOf(',') + 1), width: out.width, height: out.height };
   }
@@ -784,7 +770,7 @@ const ENGINE_JS = String.raw`
     getImage(req).then(function (img) {
       if (req.op === 'detect') return detect(img);
       if (req.op === 'prepare') return prepare(img, req.alias);
-      if (req.op === 'render') return renderFiltered(img, req.recipe, req.rotation);
+      if (req.op === 'render') return renderFiltered(img, req.filter, req.adjust, req.rotation);
       if (req.op === 'warp') return warp(img, req.corners);
       throw new Error('Unknown operation: ' + req.op);
     }).then(function (result) {
@@ -800,4 +786,4 @@ const ENGINE_JS = String.raw`
 
 export const EDGE_ENGINE_HTML = `<!DOCTYPE html>
 <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
-<body style="margin:0;background:transparent"><script>${ENGINE_JS}</script></body></html>`;
+<body style="margin:0;background:transparent"><script>${FILTER_PIPELINE_JS}</script><script>${ENGINE_JS}</script></body></html>`;

@@ -11,6 +11,11 @@ export interface GeneratePdfOptions {
   title: string;
   pageSize?: PdfPageSize;
   quality?: PdfQuality;
+  /**
+   * Bakes a page's filter, adjustments and rotation into an image file (the scan engine).
+   * Without it, filters fall back to a CSS approximation.
+   */
+  renderPage?: (page: Page) => Promise<string>;
 }
 
 export class PdfService {
@@ -48,10 +53,19 @@ export class PdfService {
       const imageUri = page.processed_path || page.original_path;
 
       let base64 = '';
+      let baked = false;
       try {
         let sourcePath = imageUri;
+        if (options.renderPage) {
+          try {
+            sourcePath = await options.renderPage(page);
+            baked = true;
+          } catch (err) {
+            console.warn(`Page render failed, using CSS filter fallback [${i}]:`, err);
+          }
+        }
         const fileInfo = await FileSystem.getInfoAsync(sourcePath);
-        if (!fileInfo.exists && page.original_path) {
+        if (!baked && !fileInfo.exists && page.original_path) {
           const fallbackInfo = await FileSystem.getInfoAsync(page.original_path);
           if (fallbackInfo.exists) {
             sourcePath = page.original_path;
@@ -61,7 +75,7 @@ export class PdfService {
         // Apply physical rotation and requested quality compression before base64
         const transformedUri = await ImageService.transformPage(
           sourcePath,
-          (page.rotation || 0) as PageRotation,
+          (baked ? 0 : page.rotation || 0) as PageRotation,
           'original',
           options.quality || 'medium'
         );
@@ -82,8 +96,8 @@ export class PdfService {
         <div class="page-container">
           ${generatePageMarkup({
             base64,
-            filter: page.filter,
-            intensity: page.intensity ?? 0.6,
+            // Baked pages already have their filter applied
+            filter: baked ? 'original' : page.filter,
             rotation: 0,
             isForPdf: true,
           })}

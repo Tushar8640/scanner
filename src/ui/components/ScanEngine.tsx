@@ -4,7 +4,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
 import { EDGE_ENGINE_HTML } from '@/services/scanner/edgeEngineHtml';
 import { Quad } from '@/services/scanner/quad';
-import type { FilterRecipe } from '@/services/image/FilterUtils';
+import type { PageAdjust, PageFilter } from '@/core/types';
 
 export interface DetectResult {
   /** Detected document corners (normalised), or null when no document was found. */
@@ -27,8 +27,8 @@ export interface ScanEngineApi {
   prepare(uri: string): Promise<PrepareResult>;
   /** Places one or two images (ID card front / back) on a white A4 page. Returns a file URI. */
   composeIdCard(uris: string[]): Promise<string>;
-  /** Bakes a filter recipe and rotation into a JPEG (for saving or sharing images). Returns a file URI. */
-  renderFiltered(uri: string, recipe: FilterRecipe, rotation: number): Promise<string>;
+  /** Bakes the filter, adjustments and rotation into a JPEG (saving, sharing, PDF). Returns a file URI. */
+  renderFiltered(uri: string, filter: PageFilter, adjust: PageAdjust | null | undefined, rotation: number): Promise<string>;
   /** Perspective-corrects the image to the given corners and returns a new file URI. */
   warp(uri: string, corners: Quad): Promise<string>;
 }
@@ -170,8 +170,8 @@ export function ScanEngineProvider({ children }: { children: React.ReactNode }) 
         await FileSystem.writeAsStringAsync(out, res.b64, { encoding: FileSystem.EncodingType.Base64 });
         return out;
       },
-      renderFiltered: async (uri, recipe, rotation) => {
-        const res = await run<{ b64: string }>('render', uri, { recipe, rotation });
+      renderFiltered: async (uri, filter, adjust, rotation) => {
+        const res = await run<{ b64: string }>('render', uri, { filter, adjust: adjust ?? null, rotation });
         const out = newCacheFile('scan_page');
         await FileSystem.writeAsStringAsync(out, res.b64, { encoding: FileSystem.EncodingType.Base64 });
         return out;

@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { Document, Folder, Page } from '@/core/types';
+import { isDefaultAdjust, normaliseAdjust } from '@/services/image/FilterUtils';
 
 export class DatabaseService {
   private static db: SQLite.SQLiteDatabase | null = null;
@@ -45,8 +46,9 @@ export class DatabaseService {
         position INTEGER NOT NULL,
         original_path TEXT NOT NULL,
         processed_path TEXT NOT NULL,
-        filter TEXT CHECK(filter IN ('original', 'magic', 'enhanced', 'bw', 'grayscale')) DEFAULT 'magic',
+        filter TEXT DEFAULT 'magic',
         intensity REAL DEFAULT 0.6,
+        adjust TEXT NULL,
         rotation INTEGER CHECK(rotation IN (0, 90, 180, 270)) DEFAULT 0,
         ocr_text TEXT NULL,
         FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
@@ -68,6 +70,44 @@ export class DatabaseService {
     } catch {
       // column already exists
     }
+    try {
+      await db.execAsync('ALTER TABLE pages ADD COLUMN adjust TEXT NULL;');
+    } catch {
+      // column already exists
+    }
+    await this.dropPageFilterCheck(db);
+  }
+
+  /**
+   * Older installs created pages with CHECK(filter IN (...)) listing only five filters, which
+   * rejects newer ones (lighten, noshadow, eco, invert). SQLite cannot drop a constraint, so the
+   * table is rebuilt once, keeping every row.
+   */
+  private static async dropPageFilterCheck(db: SQLite.SQLiteDatabase): Promise<void> {
+    const row = await db.getFirstAsync<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pages'");
+    if (!row?.sql || !/CHECK\s*\(\s*filter\s+IN/i.test(row.sql)) return;
+    await db.withTransactionAsync(async () => {
+      await db.execAsync(`
+        CREATE TABLE pages_new (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          original_path TEXT NOT NULL,
+          processed_path TEXT NOT NULL,
+          filter TEXT DEFAULT 'magic',
+          intensity REAL DEFAULT 0.6,
+          adjust TEXT NULL,
+          rotation INTEGER CHECK(rotation IN (0, 90, 180, 270)) DEFAULT 0,
+          ocr_text TEXT NULL,
+          FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        INSERT INTO pages_new (id, document_id, position, original_path, processed_path, filter, intensity, adjust, rotation, ocr_text)
+          SELECT id, document_id, position, original_path, processed_path, filter, intensity, adjust, rotation, ocr_text FROM pages;
+        DROP TABLE pages;
+        ALTER TABLE pages_new RENAME TO pages;
+        CREATE INDEX IF NOT EXISTS idx_pages_doc ON pages(document_id, position);
+      `);
+    });
   }
 
   // Whitelist of valid column names to prevent SQL injection
@@ -90,6 +130,7 @@ export class DatabaseService {
     'processed_path',
     'filter',
     'intensity',
+    'adjust',
     'rotation',
     'ocr_text',
   ]);
@@ -219,7 +260,11 @@ export class DatabaseService {
     if (keys.length === 0) return;
 
     const setClauses = keys.map((k) => `${k} = ?`).join(', ');
-    const values = keys.map((k) => (updates as any)[k]);
+    const values = keys.map((k) => {
+      const v = (updates as any)[k];
+      if (k === 'adjust') return isDefaultAdjust(v) ? null : JSON.stringify(normaliseAdjust(v));
+      return v;
+    });
     values.push(id);
 
     await db.runAsync(`UPDATE documents SET ${setClauses} WHERE id = ?`, values);
@@ -243,15 +288,17 @@ export class DatabaseService {
   // --- Page Operations ---
   static async getPagesByDocumentId(documentId: string): Promise<Page[]> {
     const db = await this.getDb();
-    return await db.getAllAsync<Page>(
+    const rows = await db.getAllAsync<Page>(
       'SELECT * FROM pages WHERE document_id = ? ORDER BY position ASC',
       [documentId]
     );
+    // adjust is stored as JSON text
+    return rows.map((r) => ({ ...r, adjust: r.adjust ? normaliseAdjust(r.adjust) : null }));
   }
 
   static async insertPages(pages: Page[]): Promise<void> {
     const db = await this.getDb();
-    const validFilters = ['original', 'lighten', 'magic', 'enhanced', 'noshadow', 'bw', 'grayscale'];
+    const validFilters = ['original', 'lighten', 'magic', 'enhanced', 'noshadow', 'bw', 'eco', 'grayscale', 'invert'];
 
     for (const page of pages) {
       const safeFilter = validFilters.includes(page.filter?.toLowerCase()) ? page.filter.toLowerCase() : 'magic';
@@ -260,8 +307,8 @@ export class DatabaseService {
 
       try {
         await db.runAsync(
-          `INSERT INTO pages (id, document_id, position, original_path, processed_path, filter, intensity, rotation, ocr_text)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO pages (id, document_id, position, original_path, processed_path, filter, intensity, adjust, rotation, ocr_text)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             page.id,
             page.document_id,
@@ -270,6 +317,7 @@ export class DatabaseService {
             page.processed_path,
             safeFilter,
             safeIntensity,
+            isDefaultAdjust(page.adjust) ? null : JSON.stringify(normaliseAdjust(page.adjust)),
             safeRotation,
             page.ocr_text,
           ]
