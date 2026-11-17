@@ -10,6 +10,8 @@ import {
   ScrollView,
   Image,
   Alert,
+  Keyboard,
+  Platform,
 } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,13 +30,21 @@ interface AnnotateModalProps {
   mode: AnnotateMode;
   imageUri: string;
   onClose: () => void;
-  /** Receives a new image file with the annotations flattened in. */
-  onApply: (uri: string) => void;
+  /**
+   * Receives new image files with the annotations flattened in. The first is the edited page;
+   * when a watermark is applied to all pages, the rest follow in the order of `otherPages`.
+   */
+  onApply: (uris: string[]) => void;
+  /** Watermark only: the document's other pages, prepared on demand (filter and rotation baked in). */
+  otherPages?: { count: number; prepare: (index: number) => Promise<string> };
 }
 
 const INK_COLORS = ['#111111', '#1F4FD8', '#D93025', '#188038', '#F9AB00'];
 const WM_COLORS = ['#9AA0A6', '#111111', '#D93025', '#1F4FD8'];
+const WM_SIZES = [0.04, 0.06, 0.09];
 const WIDTHS = [0.003, 0.006, 0.012];
+
+type Waiter = { type: string; resolve: (m: any) => void; reject: (e: Error) => void };
 
 export const AnnotateModal: React.FC<AnnotateModalProps> = ({ visible, ...rest }) => {
   if (!visible || !rest.imageUri) return null;
@@ -45,7 +55,31 @@ export const AnnotateModal: React.FC<AnnotateModalProps> = ({ visible, ...rest }
   );
 };
 
-const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, imageUri, onClose, onApply }) => {
+async function writeJpeg(b64: string): Promise<string> {
+  const dir = FileSystem.cacheDirectory;
+  if (!dir) throw new Error('Cache directory is not accessible');
+  const out = `${dir}annotated_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.jpg`;
+  await FileSystem.writeAsStringAsync(out, b64, { encoding: FileSystem.EncodingType.Base64 });
+  return out;
+}
+
+/** Height of the on-screen keyboard, so the tool panel can sit above it. */
+function useKeyboardHeight(): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, (e) => setHeight(e.endCoordinates.height));
+    const h = Keyboard.addListener(hideEvt, () => setHeight(0));
+    return () => {
+      s.remove();
+      h.remove();
+    };
+  }, []);
+  return height;
+}
+
+const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, imageUri, onClose, onApply, otherPages }) => {
   const colors = useThemeColors();
   const { t } = useSettingsStore();
   const insets = useSafeAreaInsets();
@@ -59,17 +93,32 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
   const [width, setWidth] = useState(WIDTHS[1]);
   const [wmText, setWmText] = useState('');
   const [wmColor, setWmColor] = useState(WM_COLORS[0]);
-  const [wmOpacity, setWmOpacity] = useState(0.25);
+  const [wmOpacity, setWmOpacity] = useState(0.3);
+  const [wmSize, setWmSize] = useState(WM_SIZES[1]);
+  const [wmAllPages, setWmAllPages] = useState(true);
+  const [progress, setProgress] = useState<string | null>(null);
   const [padVisible, setPadVisible] = useState(false);
-  const [savedSigs, setSavedSigs] = useState<string[]>([]);
+  const [savedSigs, setSavedSigs] = useState<string[] | null>(null);
+  const waiterRef = useRef<Waiter | null>(null);
+  const sigInitRef = useRef(false);
+  const keyboardHeight = useKeyboardHeight();
+  const hasOtherPages = mode === 'watermark' && !!otherPages && otherPages.count > 0;
 
   const cmd = useCallback((m: Record<string, unknown>) => {
     webRef.current?.injectJavaScript(`window.__cmd && window.__cmd(${JSON.stringify(m)}); true;`);
   }, []);
 
+  /** Resolves with the next message of the given type posted by the editor page. */
+  const waitFor = (type: string, send?: () => void) =>
+    new Promise<any>((resolve, reject) => {
+      waiterRef.current = { type, resolve, reject };
+      send?.();
+    });
+
   const refreshSigs = useCallback(() => {
     SignatureService.list().then(setSavedSigs, () => setSavedSigs([]));
   }, []);
+
 
   useEffect(() => {
     if (mode !== 'sign') return;
@@ -85,8 +134,14 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
 
   // Watermark preview follows the inputs live
   useEffect(() => {
-    if (ready && mode === 'watermark') cmd({ type: 'watermark', wm: { text: wmText, color: wmColor, opacity: wmOpacity } });
-  }, [ready, mode, wmText, wmColor, wmOpacity, cmd]);
+    if (ready && mode === 'watermark')
+      cmd({ type: 'watermark', wm: { text: wmText.trim(), color: wmColor, opacity: wmOpacity, size: wmSize } });
+  }, [ready, mode, wmText, wmColor, wmOpacity, wmSize, cmd]);
+
+  const loadImage = async (uri: string) => {
+    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    webRef.current?.injectJavaScript(`window.__load(${JSON.stringify(b64)}); true;`);
+  };
 
   const onMessage = async (e: WebViewMessageEvent) => {
     let m: any;
@@ -95,35 +150,62 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
     } catch {
       return;
     }
+    const waiter = waiterRef.current;
+    if (waiter && (m.type === waiter.type || m.type === 'error')) {
+      waiterRef.current = null;
+      if (m.type === 'error') waiter.reject(new Error(m.message || 'Editing failed'));
+      else waiter.resolve(m);
+      if (m.type !== 'ready') return;
+    }
     if (m.type === 'booted') {
-      const b64 = await FileSystem.readAsStringAsync(imageUri, { encoding: FileSystem.EncodingType.Base64 });
-      webRef.current?.injectJavaScript(`window.__load(${JSON.stringify(b64)}); true;`);
+      loadImage(imageUri).catch((err) => Alert.alert(t('error'), err?.message || 'Could not open the page'));
     } else if (m.type === 'ready') {
       setReady(true);
       cmd({ type: 'mode', mode });
       cmd({ type: 'color', color: inkColor });
       cmd({ type: 'width', width });
-      // Open the pad straight away when there is no saved signature yet
-      if (mode === 'sign' && savedSigs.length === 0) setPadVisible(true);
+      // Sign: put the most recent signature on the page straight away, or open the pad if there is none
+      if (mode === 'sign' && !sigInitRef.current) {
+        sigInitRef.current = true;
+        const list = await SignatureService.list().catch(() => [] as string[]);
+        setSavedSigs(list);
+        if (list.length > 0) placeSignature(list[0]);
+        else setPadVisible(true);
+      }
     } else if (m.type === 'state') {
       setStrokeCount(m.strokes ?? 0);
       setHasSig(!!m.hasSig);
-    } else if (m.type === 'applied') {
-      try {
-        const dir = FileSystem.cacheDirectory;
-        if (!dir) throw new Error('Cache directory is not accessible');
-        const out = `${dir}annotated_${Date.now()}.jpg`;
-        await FileSystem.writeAsStringAsync(out, m.b64, { encoding: FileSystem.EncodingType.Base64 });
-        onApply(out);
-        onClose();
-      } catch (err: any) {
-        Alert.alert(t('error'), err?.message || 'Could not save the page');
-      } finally {
-        setApplying(false);
-      }
     } else if (m.type === 'error') {
-      setApplying(false);
       Alert.alert(t('error'), m.message || 'Editing failed');
+    }
+  };
+
+  const apply = async () => {
+    Keyboard.dismiss();
+    setApplying(true);
+    try {
+      const all = hasOtherPages && wmAllPages;
+      const total = all ? otherPages!.count + 1 : 1;
+      if (all) setProgress(t('applyingPages').replace('{i}', '1').replace('{n}', String(total)));
+      const first = await waitFor('applied', () => cmd({ type: 'apply' }));
+      const out = [await writeJpeg(first.b64)];
+      if (all) {
+        // Same watermark settings stay in the editor; load each other page and flatten it
+        for (let i = 0; i < otherPages!.count; i++) {
+          setProgress(t('applyingPages').replace('{i}', String(i + 2)).replace('{n}', String(total)));
+          const uri = await otherPages!.prepare(i);
+          await waitFor('ready', () => loadImage(uri).catch((err) => waiterRef.current?.reject(err)));
+          const res = await waitFor('applied', () => cmd({ type: 'apply' }));
+          out.push(await writeJpeg(res.b64));
+        }
+      }
+      onApply(out);
+      onClose();
+    } catch (err: any) {
+      waiterRef.current = null;
+      Alert.alert(t('error'), err?.message || 'Could not save the page');
+      setApplying(false);
+      setProgress(null);
     }
   };
 
@@ -141,19 +223,16 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
   const title = mode === 'markup' ? t('markup') : mode === 'sign' ? t('sign') : t('watermark');
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: keyboardHeight > 0 ? keyboardHeight : insets.bottom }]}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.iconBtn} onPress={onClose} accessibilityLabel={t('cancel')}>
+        <TouchableOpacity style={styles.iconBtn} onPress={onClose} disabled={applying} accessibilityLabel={t('cancel')}>
           <Ionicons name="arrow-back" size={26} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.title}>{title}</Text>
         <TouchableOpacity
           style={[styles.applyBtn, { backgroundColor: canApply ? colors.primary : '#3A3F47' }]}
           disabled={!canApply}
-          onPress={() => {
-            setApplying(true);
-            cmd({ type: 'apply' });
-          }}
+          onPress={apply}
           accessibilityLabel={t('save')}
         >
           {applying ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Ionicons name="checkmark" size={24} color="#FFFFFF" />}
@@ -171,9 +250,15 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
           overScrollMode="never"
           style={styles.web}
         />
-        {!ready && (
-          <View style={styles.loading}>
+        {mode === 'watermark' && ready && !wmText.trim() && (
+          <View style={styles.stageHint} pointerEvents="none">
+            <Text style={styles.stageHintText}>{t('wmEmptyHint')}</Text>
+          </View>
+        )}
+        {(!ready || progress) && (
+          <View style={[styles.loading, progress ? styles.loadingDim : null]}>
             <ActivityIndicator size="large" color="#FFFFFF" />
+            {progress && <Text style={styles.progressText}>{progress}</Text>}
           </View>
         )}
       </View>
@@ -214,7 +299,7 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
                 <Ionicons name="add" size={26} color="#FFFFFF" />
                 <Text style={styles.newSigText}>{t('newSignature')}</Text>
               </TouchableOpacity>
-              {savedSigs.map((uri) => (
+              {(savedSigs ?? []).map((uri) => (
                 <TouchableOpacity
                   key={uri}
                   style={styles.sigThumb}
@@ -248,17 +333,46 @@ const AnnotateEditor: React.FC<Omit<AnnotateModalProps, 'visible'>> = ({ mode, i
               placeholder={t('watermarkPlaceholder')}
               placeholderTextColor="#8A8F98"
               maxLength={40}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={() => Keyboard.dismiss()}
             />
             <View style={styles.row}>
               {WM_COLORS.map((c) => (
                 <Swatch key={c} color={c} active={wmColor === c} onPress={() => setWmColor(c)} />
               ))}
               <View style={styles.sep} />
-              {[0.15, 0.25, 0.4].map((o, i) => (
+              {[0.18, 0.3, 0.45].map((o, i) => (
                 <TouchableOpacity key={o} style={[styles.opacityBtn, wmOpacity === o && styles.widthBtnActive]} onPress={() => setWmOpacity(o)}>
                   <Text style={styles.opacityText}>{[t('wmLight'), t('wmMedium'), t('wmStrong')][i]}</Text>
                 </TouchableOpacity>
               ))}
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>{t('wmSize')}</Text>
+              {WM_SIZES.map((s, i) => (
+                <TouchableOpacity key={s} style={[styles.widthBtn, wmSize === s && styles.widthBtnActive]} onPress={() => setWmSize(s)}>
+                  <Text style={[styles.opacityText, { fontSize: 11 + i * 3 }]}>A</Text>
+                </TouchableOpacity>
+              ))}
+              {hasOtherPages && (
+                <>
+                  <View style={{ flex: 1 }} />
+                  <View style={styles.segment}>
+                    {[false, true].map((all) => (
+                      <TouchableOpacity
+                        key={String(all)}
+                        style={[styles.segmentBtn, wmAllPages === all && styles.widthBtnActive]}
+                        onPress={() => setWmAllPages(all)}
+                      >
+                        <Text style={styles.opacityText}>
+                          {all ? `${t('applyToAllPages')} (${otherPages!.count + 1})` : t('thisPageOnly')}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
             </View>
           </>
         )}
@@ -377,7 +491,14 @@ const styles = StyleSheet.create({
   applyBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   stage: { flex: 1 },
   web: { flex: 1, backgroundColor: 'transparent' },
-  loading: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  loading: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingDim: { backgroundColor: 'rgba(0,0,0,0.55)' },
+  progressText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  stageHint: { position: 'absolute', left: 0, right: 0, bottom: 16, alignItems: 'center' },
+  stageHintText: { color: '#FFFFFF', fontSize: 13, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, overflow: 'hidden' },
+  rowLabel: { color: '#A3A9B2', fontSize: 12, marginRight: 2 },
+  segment: { flexDirection: 'row', borderRadius: 17, backgroundColor: '#262A31', overflow: 'hidden' },
+  segmentBtn: { paddingHorizontal: 10, height: 34, justifyContent: 'center' },
   panel: { backgroundColor: '#181B20', paddingVertical: 10, paddingHorizontal: 12, gap: 10 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 18, backgroundColor: '#262A31' },

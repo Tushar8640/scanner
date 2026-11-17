@@ -41,8 +41,12 @@ interface DocumentState {
     documentId: string,
     images: { originalUri: string; rotation?: PageRotation; filter?: PageFilter; intensity?: number }[]
   ) => Promise<void>;
-  /** Replaces a saved page's image, e.g. after markup, signature or watermark. Returns the updated page. */
-  replacePageImage: (page: Page, newImageUri: string) => Promise<Page>;
+  /**
+   * Replaces a saved page's image, e.g. after markup, signature or watermark. Returns the updated page.
+   * Pass `baked: true` when the new image already has the page's filter and rotation applied; the page
+   * is then reset to the original filter and no rotation so they are not applied twice.
+   */
+  replacePageImage: (page: Page, newImageUri: string, options?: { baked?: boolean }) => Promise<Page>;
 
   /** Creates a new document from the pages of several documents, in the given order. Originals are kept. */
   mergeDocuments: (documentIds: string[], title: string) => Promise<Document>;
@@ -275,22 +279,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     await get().loadAll();
   },
 
-  replacePageImage: async (page, newImageUri) => {
+  replacePageImage: async (page, newImageUri, options) => {
     // New file names, so cached images of the old version are not shown
     const name = `${page.id}_${Date.now()}`;
     const origPath = await StorageService.saveOriginalImage(page.document_id, name, newImageUri);
     const transformed = await ImageService.transformPage(origPath, 0, page.filter, 'medium');
     const procPath = await StorageService.saveProcessedImage(page.document_id, name, transformed);
-    await DatabaseService.updatePage(page.id, { original_path: origPath, processed_path: procPath });
+    const pageUpdates: Partial<Page> = { original_path: origPath, processed_path: procPath };
+    if (options?.baked) {
+      pageUpdates.filter = 'original';
+      pageUpdates.rotation = 0;
+    }
+    await DatabaseService.updatePage(page.id, pageUpdates);
+    const updated: Page = { ...page, ...pageUpdates };
 
     const docUpdates: Partial<Document> = { pdf_path: null, updated_at: Date.now() };
     if (page.position === 0) {
-      const thumb = await ImageService.generateThumbnail(procPath, page.rotation);
+      const thumb = await ImageService.generateThumbnail(procPath, updated.rotation);
       docUpdates.thumbnail_path = await StorageService.saveThumbnail(page.document_id, thumb);
     }
     await DatabaseService.updateDocument(page.document_id, docUpdates);
     await get().loadAll();
-    return { ...page, original_path: origPath, processed_path: procPath };
+    return updated;
   },
 
   mergeDocuments: async (documentIds, title) => {

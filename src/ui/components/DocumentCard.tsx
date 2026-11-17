@@ -12,6 +12,8 @@ interface DocumentCardProps {
   /** Selection mode: shows a checkbox instead of the more button. */
   selectionMode?: boolean;
   selected?: boolean;
+  /** Position in the selection (1-based), shown instead of a tick, e.g. the merge order. */
+  selectionIndex?: number;
 }
 
 function formatDate(ms: number): string {
@@ -27,9 +29,19 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   onMore,
   selectionMode = false,
   selected = false,
+  selectionIndex,
 }) => {
   const colors = useThemeColors();
-  const check = (
+  const check = selected && selectionIndex ? (
+    <View
+      style={[
+        styles.orderBadge,
+        { backgroundColor: colors.primary, width: variant === 'grid' ? 22 : 24, height: variant === 'grid' ? 22 : 24 },
+      ]}
+    >
+      <Text style={styles.orderBadgeText}>{selectionIndex}</Text>
+    </View>
+  ) : (
     <Ionicons
       name={selected ? 'checkmark-circle' : 'ellipse-outline'}
       size={variant === 'grid' ? 22 : 24}
@@ -115,6 +127,8 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
 };
 
 const styles = StyleSheet.create({
+  orderBadge: { borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  orderBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   thumbImg: {
     width: '100%',
     height: '100%',

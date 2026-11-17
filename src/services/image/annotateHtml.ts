@@ -35,7 +35,8 @@ const ANNOTATE_JS = String.raw`
 
   function layout() {
     var W = window.innerWidth - 24, H = window.innerHeight - 24;
-    var r = Math.min(W / img.naturalWidth, H / img.naturalHeight);
+    if (W <= 0 || H <= 0) { requestAnimationFrame(layout); return; }
+    var r =Math.min(W / img.naturalWidth, H / img.naturalHeight);
     dw = Math.round(img.naturalWidth * r); dh = Math.round(img.naturalHeight * r);
     wrap.style.width = dw + 'px'; wrap.style.height = dh + 'px';
     page.style.width = dw + 'px'; page.style.height = dh + 'px';
@@ -231,7 +232,15 @@ const PAD_JS = String.raw`
   var cv = document.getElementById('pad'), c = cv.getContext('2d'), dpr = window.devicePixelRatio || 1;
   var color = '#111111', strokes = [], cur = null;
   function post(m) { window.ReactNativeWebView.postMessage(JSON.stringify(m)); }
-  function size() { cv.width = window.innerWidth * dpr; cv.height = window.innerHeight * dpr; draw(); }
+  // The backing store is dpr x larger than the CSS box. Without an explicit CSS size the canvas
+  // is laid out at its backing size, so strokes land off screen and the pad looks blank.
+  function size() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) { requestAnimationFrame(size); return; }
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    draw();
+  }
   function draw() {
     c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, cv.width, cv.height);
     var all = cur ? strokes.concat([cur]) : strokes;

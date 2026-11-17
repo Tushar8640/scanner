@@ -518,7 +518,8 @@ function ScanReviewContent() {
           mode={annotateMode}
           imageUri={currentPage.originalUri}
           onClose={() => setAnnotateMode(null)}
-          onApply={(uri) => {
+          onApply={(uris) => {
+            const uri = uris[0];
             const pageId = currentPage.id;
             // The annotation is baked into the page; later re-crops start from it too
             setPages((prev) =>

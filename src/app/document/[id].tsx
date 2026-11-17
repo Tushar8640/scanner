@@ -67,7 +67,9 @@ function DocumentDetail() {
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [gridDragging, setGridDragging] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const [annotate, setAnnotate] = useState<{ mode: AnnotateMode; page: Page } | null>(null);
+  // `uri` is the page rendered with its filter and rotation, so the editor shows what the user sees
+  const [annotate, setAnnotate] = useState<{ mode: AnnotateMode; page: Page; uri: string } | null>(null);
+  const [viewerHint, setViewerHint] = useState<string | null>(null);
   const [sheet, setSheet] = useState<'more' | 'share' | 'add' | null>(null);
   const [pdfModalVisible, setPdfModalVisible] = useState(false);
   const [pageSize, setPageSize] = useState<PdfPageSize>(default_page_size);
@@ -89,8 +91,24 @@ function DocumentDetail() {
         actionHandledRef.current = true;
         if (action === 'pdf') {
           setPdfModalVisible(true);
+        } else if (action === 'sign' && list.length > 1) {
+          // Let the user pick which page to sign
+          setViewerHint(t('signPickPage'));
+          setViewerIndex(list.length - 1);
         } else if (action === 'sign' || action === 'watermark' || action === 'markup') {
-          setAnnotate({ mode: action, page: list[0] });
+          const page = list[0];
+          setLoading(false);
+          setBusyText(t('processing'));
+          try {
+            const uri = await engine.renderFiltered(
+              page.processed_path || page.original_path,
+              getFilterRecipe(page.filter, page.intensity ?? 0.6),
+              page.rotation
+            );
+            setAnnotate({ mode: action, page, uri });
+          } finally {
+            setBusyText(null);
+          }
         }
       }
     } catch (e) {
@@ -98,7 +116,7 @@ function DocumentDetail() {
     } finally {
       setLoading(false);
     }
-  }, [action, id]);
+  }, [action, id, engine, t]);
 
   // Reload when returning from "Add pages"
   useFocusEffect(
@@ -151,6 +169,38 @@ function DocumentDetail() {
       out.push(await engine.renderFiltered(p.processed_path || p.original_path, getFilterRecipe(p.filter, p.intensity ?? 0.6), p.rotation));
     }
     return out;
+  };
+
+  const openAnnotate = (mode: AnnotateMode, page: Page) =>
+    withBusy(t('processing'), async () => {
+      const [uri] = await renderPages([page]);
+      setAnnotate({ mode, page, uri });
+    });
+
+  /** Sign on a multi-page document: let the user pick the page in the viewer first. */
+  const startSign = (list: Page[]) => {
+    if (list.length === 1) {
+      openAnnotate('sign', list[0]);
+    } else {
+      setViewerHint(t('signPickPage'));
+      setViewerIndex(list.length - 1);
+    }
+  };
+
+  const otherPagesFor = (page: Page) => pages.filter((p) => p.id !== page.id);
+
+  const applyAnnotation = async (uris: string[]) => {
+    if (!annotate) return;
+    const targets = [annotate.page, ...otherPagesFor(annotate.page)].slice(0, uris.length);
+    await withBusy(t('saving'), async () => {
+      const updatedById = new Map<string, Page>();
+      for (let i = 0; i < targets.length; i++) {
+        const updated = await replacePageImage(targets[i], uris[i], { baked: true });
+        updatedById.set(updated.id, updated);
+      }
+      setPages((prev) => prev.map((p) => updatedById.get(p.id) ?? p));
+      setDocument((prev) => (prev ? { ...prev, pdf_path: null } : prev));
+    });
   };
 
   const shareImage = (index: number) =>
@@ -328,6 +378,22 @@ function DocumentDetail() {
 
   const viewerPage = viewerIndex !== null ? pages[viewerIndex] : null;
 
+  const annotateOthers = annotate?.mode === 'watermark' ? otherPagesFor(annotate.page) : [];
+  const annotateModal = annotate ? (
+    <AnnotateModal
+      visible
+      mode={annotate.mode}
+      imageUri={annotate.uri}
+      onClose={() => setAnnotate(null)}
+      otherPages={
+        annotateOthers.length > 0
+          ? { count: annotateOthers.length, prepare: async (i) => (await renderPages([annotateOthers[i]]))[0] }
+          : undefined
+      }
+      onApply={applyAnnotation}
+    />
+  ) : null;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
@@ -410,7 +476,7 @@ function DocumentDetail() {
           icon="pencil-outline"
           label={t('sign')}
           color={colors.text}
-          onPress={() => (pages.length === 1 ? setAnnotate({ mode: 'sign', page: pages[0] }) : setViewerIndex(0))}
+          onPress={() => startSign(pages)}
         />
       </View>
 
@@ -426,10 +492,10 @@ function DocumentDetail() {
       <ActionSheet visible={sheet === 'add'} title={t('addPage')} items={addItems} onClose={() => setSheet(null)} />
 
       {/* Page viewer with per-page tools */}
-      <Modal visible={viewerPage !== null} animationType="fade" onRequestClose={() => setViewerIndex(null)} statusBarTranslucent>
+      <Modal visible={viewerPage !== null} animationType="fade" onRequestClose={() => { setViewerIndex(null); setViewerHint(null); }} statusBarTranslucent>
         <View style={[styles.viewer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.viewerHeader}>
-            <TouchableOpacity style={styles.headerBtn} onPress={() => setViewerIndex(null)}>
+            <TouchableOpacity style={styles.headerBtn} onPress={() => { setViewerIndex(null); setViewerHint(null); }}>
               <Ionicons name="arrow-back" size={26} color="#FFFFFF" />
             </TouchableOpacity>
             <Text style={styles.viewerTitle}>
@@ -464,12 +530,18 @@ function DocumentDetail() {
               </TouchableOpacity>
             )}
           </View>
+          {viewerHint && (
+            <TouchableOpacity style={styles.viewerHint} onPress={() => setViewerHint(null)}>
+              <Ionicons name="information-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.viewerHintText}>{viewerHint}</Text>
+            </TouchableOpacity>
+          )}
           {viewerPage && viewerIndex !== null && (
             <View style={styles.viewerTools}>
               <ViewerTool icon="refresh" label={t('rotate')} onPress={() => rotatePage(viewerIndex)} />
-              <ViewerTool icon="brush-outline" label={t('markup')} onPress={() => setAnnotate({ mode: 'markup', page: viewerPage })} />
-              <ViewerTool icon="create-outline" label={t('sign')} onPress={() => setAnnotate({ mode: 'sign', page: viewerPage })} />
-              <ViewerTool icon="water-outline" label={t('watermark')} onPress={() => setAnnotate({ mode: 'watermark', page: viewerPage })} />
+              <ViewerTool icon="brush-outline" label={t('markup')} onPress={() => openAnnotate('markup', viewerPage)} />
+              <ViewerTool icon="create-outline" label={t('sign')} onPress={() => { setViewerHint(null); openAnnotate('sign', viewerPage); }} />
+              <ViewerTool icon="water-outline" label={t('watermark')} onPress={() => openAnnotate('watermark', viewerPage)} />
               <ViewerTool
                 icon="text"
                 label={t('text')}
@@ -480,42 +552,17 @@ function DocumentDetail() {
           )}
         </View>
 
-        {annotate && (
-          <AnnotateModal
-            visible
-            mode={annotate.mode}
-            imageUri={annotate.page.processed_path || annotate.page.original_path}
-            onClose={() => setAnnotate(null)}
-            onApply={async (uri) => {
-              const target = annotate.page;
-              await withBusy(t('saving'), async () => {
-                const updated = await replacePageImage(target, uri);
-                setPages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-                setDocument((prev) => (prev ? { ...prev, pdf_path: null } : prev));
-              });
-            }}
-          />
+        {busyText && (
+          <View style={styles.busyOverlay}>
+            <ActivityIndicator size="large" color="#FFFFFF" />
+            <Text style={styles.busyText}>{busyText}</Text>
+          </View>
         )}
+        {annotateModal}
       </Modal>
 
-      {/* Sign straight from the bottom bar (single-page documents) */}
-      {annotate && viewerPage === null && (
-        <AnnotateModal
-          visible
-          mode={annotate.mode}
-          imageUri={annotate.page.processed_path || annotate.page.original_path}
-          onClose={() => setAnnotate(null)}
-          onApply={async (uri) => {
-            const target = annotate.page;
-            await withBusy(t('saving'), async () => {
-              const updated = await replacePageImage(target, uri);
-              setPages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-              setDocument((prev) => (prev ? { ...prev, pdf_path: null } : prev));
-              if (updated.position === 0) reload();
-            });
-          }}
-        />
-      )}
+      {/* Annotate straight from the bottom bar or from a tool action */}
+      {viewerPage === null && annotateModal}
 
       {/* PDF export settings */}
       <Modal visible={pdfModalVisible} transparent animationType="slide" onRequestClose={() => setPdfModalVisible(false)}>
@@ -704,6 +751,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  viewerHint: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: '#0FA58E' },
+  viewerHintText: { flex: 1, color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
   viewerTools: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: '#181B20' },
   viewerTool: { alignItems: 'center', gap: 4, minWidth: 52 },
   viewerToolText: { color: '#FFFFFF', fontSize: 11 },

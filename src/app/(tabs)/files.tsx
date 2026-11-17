@@ -66,7 +66,10 @@ export default function FilesScreen() {
   // Documents being moved (one from the "more" sheet, or several from selection mode)
   const [moveIds, setMoveIds] = useState<string[] | null>(null);
   const [selectMode, setSelectMode] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Ids in the order they were tapped; this is also the merge order
+  const [selected, setSelected] = useState<string[]>([]);
+  // Selection was opened from the Merge tool
+  const [mergeIntent, setMergeIntent] = useState(false);
   const [working, setWorking] = useState(false);
   const [activeToolAction, setActiveToolAction] = useState<'sign' | 'watermark' | 'pdf' | null>(null);
 
@@ -78,7 +81,11 @@ export default function FilesScreen() {
     if (params.newFolder) setTimeout(() => setFolderModalVisible(true), 0);
   }, [params.newFolder]);
   useEffect(() => {
-    if (params.select) setTimeout(() => setSelectMode(true), 0);
+    if (params.select)
+      setTimeout(() => {
+        setSelectMode(true);
+        setMergeIntent(true);
+      }, 0);
   }, [params.select]);
   useEffect(() => {
     if (params.toolAction) {
@@ -88,17 +95,13 @@ export default function FilesScreen() {
 
   const exitSelect = () => {
     setSelectMode(false);
-    setSelected(new Set());
+    setMergeIntent(false);
+    setSelected([]);
   };
   const toggleSelected = (docId: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(docId)) next.delete(docId);
-      else next.add(docId);
-      return next;
-    });
-  // Selected ids in the order shown on screen (used as the merge order)
-  const selectedInOrder = () => documents.filter((d) => selected.has(d.id)).map((d) => d.id);
+    setSelected((prev) => (prev.includes(docId) ? prev.filter((x) => x !== docId) : [...prev, docId]));
+  // Selected ids in the order they were tapped, skipping any that are no longer listed
+  const selectedInOrder = () => selected.filter((id) => documents.some((d) => d.id === id));
 
   const handleMerge = async () => {
     if (!PremiumService.require('merge')) return;
@@ -244,7 +247,7 @@ export default function FilesScreen() {
               <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.selectTitle, { color: colors.text }]}>
-              {t('selectedCount').replace('{n}', String(selected.size))}
+              {t('selectedCount').replace('{n}', String(selected.length))}
             </Text>
           </View>
         ) : activeFolder ? (
@@ -265,7 +268,7 @@ export default function FilesScreen() {
           <TouchableOpacity
             style={styles.selectAllBtn}
             onPress={() =>
-              setSelected(selected.size === documents.length ? new Set() : new Set(documents.map((d) => d.id)))
+              setSelected(selected.length === documents.length ? [] : [...selected, ...documents.map((d) => d.id).filter((id) => !selected.includes(id))])
             }
           >
             <Text style={[styles.selectAllText, { color: colors.primary }]}>{t('selectAll')}</Text>
@@ -336,6 +339,15 @@ export default function FilesScreen() {
         </View>
       </View>
 
+      {selectMode && mergeIntent && (
+        <View style={[styles.toolBanner, { backgroundColor: colors.primary }]}>
+          <Ionicons name="git-merge" size={20} color="#FFFFFF" />
+          <Text style={styles.toolBannerText} numberOfLines={2}>
+            {t('mergeHint')}
+          </Text>
+        </View>
+      )}
+
       {/* Active tool action banner */}
       {activeToolAction && (
         <View style={[styles.toolBanner, { backgroundColor: colors.primary }]}>
@@ -368,7 +380,8 @@ export default function FilesScreen() {
             document={item}
             variant={viewMode}
             selectionMode={selectMode}
-            selected={selected.has(item.id)}
+            selected={selected.includes(item.id)}
+            selectionIndex={selected.includes(item.id) ? selected.indexOf(item.id) + 1 : undefined}
             onPress={() => {
               if (selectMode) {
                 toggleSelected(item.id);
@@ -409,15 +422,21 @@ export default function FilesScreen() {
 
       {selectMode ? (
         <View style={[styles.selectBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <SelectAction icon="git-merge-outline" label={t('merge')} color={colors.text} onPress={handleMerge} disabled={working} />
+          <SelectAction
+            icon="git-merge-outline"
+            label={selected.length >= 2 ? `${t('merge')} (${selected.length})` : t('merge')}
+            color={mergeIntent && selected.length >= 2 ? colors.primary : colors.text}
+            onPress={handleMerge}
+            disabled={working || selected.length < 2}
+          />
           <SelectAction
             icon="folder-outline"
             label={t('moveShort')}
             color={colors.text}
-            onPress={() => selected.size > 0 && setMoveIds(selectedInOrder())}
-            disabled={selected.size === 0}
+            onPress={() => selected.length > 0 && setMoveIds(selectedInOrder())}
+            disabled={selected.length === 0}
           />
-          <SelectAction icon="trash-outline" label={t('delete')} color={colors.danger} onPress={handleDeleteSelected} disabled={selected.size === 0} />
+          <SelectAction icon="trash-outline" label={t('delete')} color={colors.danger} onPress={handleDeleteSelected} disabled={selected.length === 0} />
         </View>
       ) : (
         <ScanFab />
